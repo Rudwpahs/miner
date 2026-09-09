@@ -66,11 +66,11 @@ class CrossrefAdapter:
         payload = response.json()
         message = payload.get("message") if isinstance(payload, dict) else None
         if not isinstance(message, dict):
-            raise ValueError("Crossref response missing message object")
+            raise TypeError("Crossref response missing message object")
 
         raw_items = message.get("items", [])
         if not isinstance(raw_items, list):
-            raise ValueError("Crossref message.items must be a list")
+            raise TypeError("Crossref message.items must be a list")
 
         records: list[SourceRecord] = []
         errors = 0
@@ -100,7 +100,7 @@ class CrossrefAdapter:
     @staticmethod
     def _record_from_item(item: Any) -> SourceRecord:
         if not isinstance(item, dict):
-            raise ValueError("Crossref item must be an object")
+            raise TypeError("Crossref item must be an object")
         doi = str(item.get("DOI", "")).strip()
         titles = item.get("title")
         title = str(titles[0]).strip() if isinstance(titles, list) and titles else ""
@@ -112,7 +112,12 @@ class CrossrefAdapter:
             if not isinstance(author, dict):
                 continue
             name = " ".join(
-                part for part in (str(author.get("given", "")).strip(), str(author.get("family", "")).strip()) if part
+                part
+                for part in (
+                    str(author.get("given", "")).strip(),
+                    str(author.get("family", "")).strip(),
+                )
+                if part
             )
             if name:
                 authors.append(name)
