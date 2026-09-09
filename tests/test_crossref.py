@@ -6,7 +6,6 @@ import httpx
 from basketball_miner.models import Checkpoint
 from basketball_miner.sources.crossref import CrossrefAdapter
 
-
 FIXTURE = Path(__file__).parent / "fixtures" / "crossref.json"
 
 
