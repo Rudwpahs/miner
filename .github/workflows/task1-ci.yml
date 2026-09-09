@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - work/gpt-basketball-miner-v1
+  pull_request:
 
 permissions:
   contents: read
