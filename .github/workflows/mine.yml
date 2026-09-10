@@ -1,0 +1,103 @@
+name: Basketball Knowledge Miner
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      export:
+        description: "Export relevance-passed candidates to the private target"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: basketball-knowledge-miner
+  cancel-in-progress: false
+
+jobs:
+  mine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v6.0.0
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install .
+      - name: Load safe state
+        run: |
+          mkdir -p _state_current
+          git fetch --depth=1 origin miner-state
+          git show FETCH_HEAD:state/crossref.json > _state_current/crossref.json
+          git show FETCH_HEAD:state/youtube_rss.json > _state_current/youtube_rss.json
+          git show FETCH_HEAD:state/seen_hashes.jsonl > _state_current/seen_hashes.jsonl
+      - name: Mine and export
+        env:
+          HOOPHUB_MINER_TOKEN: ${{ secrets.HOOPHUB_MINER_TOKEN }}
+          HOOPHUB_TARGET_REPO: Rudwpahs/hoopDB
+          HOOPHUB_TARGET_BRANCH: main
+          MANUAL_EXPORT: ${{ inputs.export }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$MANUAL_EXPORT" != "true" ]; then
+            python scripts/run_miner.py --budget 500 --state-dir _state_current --no-export
+          else
+            python scripts/run_miner.py --budget 500 --state-dir _state_current --next-state-dir _state_next
+          fi
+      - name: Upload next safe state
+        if: github.event_name == 'schedule' || inputs.export == true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: miner-next-state
+          path: _state_next/
+          if-no-files-found: error
+          retention-days: 1
+
+  persist-state:
+    needs: mine
+    if: github.event_name == 'schedule' || inputs.export == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout state branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: miner-state
+          fetch-depth: 1
+      - name: Download next safe state
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: miner-next-state
+          path: _state_next
+      - name: Validate state payload shape
+        run: |
+          test -f _state_next/crossref.json
+          test -f _state_next/youtube_rss.json
+          test -f _state_next/seen_hashes.jsonl
+          test "$(find _state_next -type f | wc -l)" -eq 3
+      - name: Persist safe state only
+        run: |
+          mkdir -p state
+          cp _state_next/crossref.json state/crossref.json
+          cp _state_next/youtube_rss.json state/youtube_rss.json
+          cp _state_next/seen_hashes.jsonl state/seen_hashes.jsonl
+          git config user.name "basketball-knowledge-miner[bot]"
+          git config user.email "basketball-knowledge-miner[bot]@users.noreply.github.com"
+          git add state/crossref.json state/youtube_rss.json state/seen_hashes.jsonl
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "state: advance miner checkpoints"
+          git push origin HEAD:miner-state
