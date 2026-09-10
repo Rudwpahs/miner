@@ -32,5 +32,23 @@ jobs:
           git show FETCH_HEAD:state/crossref.json > _state_current/crossref.json
           git show FETCH_HEAD:state/youtube_rss.json > _state_current/youtube_rss.json
           git show FETCH_HEAD:state/seen_hashes.jsonl > _state_current/seen_hashes.jsonl
+      - name: Diagnose adapters by counts only
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from basketball_miner.sources.crossref import CrossrefAdapter
+          from basketball_miner.sources.youtube_rss import YouTubeRssAdapter, load_channel_ids
+          from basketball_miner.state import load_checkpoint
+
+          state = Path("_state_current")
+          adapters = [
+              ("crossref", CrossrefAdapter(), load_checkpoint(state / "crossref.json", "crossref")),
+              ("youtube_rss", YouTubeRssAdapter(load_channel_ids(Path("config/youtube_channels.json"))), load_checkpoint(state / "youtube_rss.json", "youtube_rss")),
+          ]
+          for name, adapter, checkpoint in adapters:
+              batch = adapter.fetch(checkpoint, 50)
+              print(json.dumps({"adapter": name, "records": len(batch.records), "errors": batch.error_count, "rate_limited": batch.rate_limited}, sort_keys=True))
+          PY
       - name: Run real collector dry-run
         run: python scripts/run_miner.py --budget 500 --state-dir _state_current --no-export
