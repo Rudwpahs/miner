@@ -12,7 +12,7 @@ The miner repository is public. It may contain source code, tests, fixtures, the
 
 Live candidate export is permitted only to a GitHub repository whose API metadata reports `private: true`. `scripts/run_miner.py` performs this preflight before constructing the live sink. A public target is a hard failure; do not remove or bypass this check.
 
-Current implementation note: `Rudwpahs/shooting-profile-coach-ios` was publicly visible when Task 8 was verified. Therefore the scheduled workflow is intentionally **not ready for live export** until either that repository is made private or `HOOPHUB_TARGET_REPO` is changed to an approved private candidate-data repository.
+The approved production target is `Rudwpahs/hoopDB`, a separate private candidate-data repository. The workflow sets `HOOPHUB_TARGET_REPO=Rudwpahs/hoopDB`; do not redirect production export back into a public application repository.
 
 ## Secret setup
 
@@ -39,7 +39,7 @@ Do not add candidate titles, URLs, abstracts, transcripts, tokens, or other sour
 Before enabling scheduled live export, use this order:
 
 1. Merge the reviewed miner PR so `mine.yml` exists on the default branch.
-2. Keep the target private and configure the least-privilege `HOOPHUB_MINER_TOKEN` secret.
+2. Keep `Rudwpahs/hoopDB` private and configure the least-privilege `HOOPHUB_MINER_TOKEN` secret.
 3. Run `Basketball Knowledge Miner` manually with `export=false`. This performs collection with export disabled and prints aggregate counters only; it does not advance persisted state.
 4. Confirm the log contains counts only and no candidate URL/title/summary or secret material.
 5. For the first live integration check, use a controlled synthetic metadata item marked `[MINER-INTEGRATION-TEST]` rather than treating live web material as approved knowledge. Confirm exactly one JSONL batch appears under `ml/coach/miner-data/inbox/YYYY/MM/DD/` in the private target, then remove the synthetic inbox file after verification.
