@@ -23,6 +23,7 @@ _COACHING_TERMS = (
     "footwork",
     "shooting",
     "breakdown",
+    "explains",
 )
 _INTERVIEW_TERMS = (
     "interview",
@@ -30,7 +31,6 @@ _INTERVIEW_TERMS = (
     "mic’d up",
     "conversation",
     "talks",
-    "explains",
 )
 
 
