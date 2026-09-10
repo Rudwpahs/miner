@@ -3,9 +3,9 @@ from __future__ import annotations
 import base64
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Callable
 
 import httpx
 
@@ -59,10 +59,7 @@ class GitHubPrivateRepoSink:
             raise ValueError("batch_id contains unsupported characters")
 
         now = self._now_fn().astimezone(UTC)
-        path = (
-            "ml/coach/miner-data/inbox/"
-            f"{now:%Y/%m/%d}/{batch_id}.jsonl"
-        )
+        path = "ml/coach/miner-data/inbox/" f"{now:%Y/%m/%d}/{batch_id}.jsonl"
         jsonl = "".join(
             json.dumps(
                 candidate.model_dump(mode="json"),
