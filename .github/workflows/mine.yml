@@ -44,7 +44,7 @@ jobs:
       - name: Mine and export
         env:
           HOOPHUB_MINER_TOKEN: ${{ secrets.HOOPHUB_MINER_TOKEN }}
-          HOOPHUB_TARGET_REPO: Rudwpahs/shooting-profile-coach-ios
+          HOOPHUB_TARGET_REPO: Rudwpahs/hoopDB
           HOOPHUB_TARGET_BRANCH: main
           MANUAL_EXPORT: ${{ inputs.export }}
           EVENT_NAME: ${{ github.event_name }}
@@ -91,7 +91,7 @@ jobs:
         run: |
           mkdir -p state
           cp _state_next/crossref.json state/crossref.json
-          cp _state_next/youtube_rss.json state/youtube_rss.json
+          cp _state_next/youtube_rss.json state/youtube_rss.jsonl
           cp _state_next/seen_hashes.jsonl state/seen_hashes.jsonl
           git config user.name "basketball-knowledge-miner[bot]"
           git config user.email "basketball-knowledge-miner[bot]@users.noreply.github.com"
