@@ -26,6 +26,36 @@ class ExportReceipt:
     commit_sha: str | None
 
 
+def ensure_private_repo(
+    repo: str,
+    token: str,
+    *,
+    client: httpx.Client | None = None,
+) -> None:
+    if repo.count("/") != 1:
+        raise ValueError("repo must use owner/name form")
+    if not token:
+        raise ValueError("token must not be empty")
+    request_client = client or httpx.Client(timeout=10.0, follow_redirects=False)
+    response = request_client.get(
+        f"https://api.github.com/repos/{repo}",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    if not 200 <= response.status_code < 300:
+        status_class = response.status_code // 100
+        raise ExportError(f"target privacy preflight failed ({status_class}xx)")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise ExportError("target privacy preflight returned invalid metadata") from exc
+    if not isinstance(payload, dict) or payload.get("private") is not True:
+        raise ExportError("target repository is not private; export refused")
+
+
 class GitHubPrivateRepoSink:
     def __init__(
         self,
