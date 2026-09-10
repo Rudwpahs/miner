@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Protocol
 
-from basketball_miner.models import CandidateRecord, Checkpoint, RunCounters
+from basketball_miner.models import CandidateRecord, Checkpoint, RunCounters, SourceRecord
 from basketball_miner.normalize import canonicalize_url, fingerprint, stable_candidate_id
 from basketball_miner.relevance import classify_relevance
 from basketball_miner.sources.base import SourceAdapter
@@ -13,7 +13,11 @@ class CandidateSink(Protocol):
     def write_batch(self, batch_id: str, candidates: list[CandidateRecord]): ...
 
 
-def _candidate_from_source(source, topic_codes: tuple[str, ...], signals: tuple[str, ...]):
+def _candidate_from_source(
+    source: SourceRecord,
+    topic_codes: tuple[str, ...],
+    signals: tuple[str, ...],
+) -> CandidateRecord:
     candidate_id, canonical_hash = stable_candidate_id(source)
     return CandidateRecord(
         **source.model_dump(exclude={"url"}),
@@ -36,12 +40,14 @@ def run_miner(
     checkpoints: dict[str, Checkpoint] | None = None,
     seen_hashes: set[str] | None = None,
     chunk_size: int = 50,
+    run_id: str | None = None,
 ) -> RunCounters:
     if not 1 <= budget <= 500:
         raise ValueError("budget must be between 1 and 500")
     if chunk_size < 1:
         raise ValueError("chunk_size must be >= 1")
 
+    resolved_run_id = run_id or datetime.now(UTC).strftime("RUN-%Y%m%dT%H%M%S%fZ")
     checkpoint_store = checkpoints if checkpoints is not None else {}
     seen_store = seen_hashes if seen_hashes is not None else set()
     for adapter in adapters:
@@ -89,7 +95,7 @@ def run_miner(
 
             if candidates:
                 sequence += 1
-                batch_id = f"MINER-{adapter.name}-{sequence:04d}"
+                batch_id = f"{resolved_run_id}-{adapter.name}-{sequence:04d}"
                 sink.write_batch(batch_id, candidates)
                 exported += len(candidates)
 
