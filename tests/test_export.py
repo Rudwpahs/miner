@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 import httpx
 
-from basketball_miner.export import GitHubPrivateRepoSink
+from basketball_miner.export import ExportError, GitHubPrivateRepoSink, ensure_private_repo
 from basketball_miner.models import CandidateRecord
 
 
@@ -88,3 +88,19 @@ def test_export_rejects_empty_batch_without_network_call():
     else:
         raise AssertionError("empty export batch must be rejected")
     assert calls == 0
+
+
+def test_private_repo_preflight_refuses_public_target_without_leaking_token():
+    token = "PRIVATE-PREFLIGHT-TOKEN"
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"private": False})
+        )
+    )
+    try:
+        ensure_private_repo("Rudwpahs/shooting-profile-coach-ios", token, client=client)
+    except ExportError as exc:
+        assert "not private" in str(exc)
+        assert token not in str(exc)
+    else:
+        raise AssertionError("public target must be rejected")
