@@ -36,10 +36,12 @@ class FakeSink:
     def __init__(self, fail: bool = False) -> None:
         self.fail = fail
         self.candidates = []
+        self.batch_ids: list[str] = []
 
     def write_batch(self, batch_id: str, candidates):
         if self.fail:
             raise RuntimeError("export failed")
+        self.batch_ids.append(batch_id)
         self.candidates.extend(candidates)
         return {"batch_id": batch_id, "count": len(candidates)}
 
@@ -94,3 +96,10 @@ def test_run_does_not_advance_checkpoint_when_export_fails():
     else:
         raise AssertionError("export failure must propagate")
     assert checkpoints["fake"].cursor == "0"
+
+
+def test_run_uses_supplied_run_id_in_export_batch_names():
+    adapter = FakeAdapter("fake", [make_source(1)])
+    sink = FakeSink()
+    run_miner([adapter], sink, budget=10, run_id="RUN-20260911T001500Z")
+    assert sink.batch_ids == ["RUN-20260911T001500Z-fake-0001"]
