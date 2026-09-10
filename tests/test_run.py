@@ -54,7 +54,13 @@ def test_run_never_inspects_more_than_500():
 
 def test_run_allocates_budget_across_adapters():
     first = FakeAdapter("first", [make_source(i, adapter="first") for i in range(200)])
-    second = FakeAdapter("second", [make_source(i, adapter="second") for i in range(200)])
+    second = FakeAdapter(
+        "second",
+        [
+            make_source(i, adapter="second", title=f"Basketball defensive closeout {i}")
+            for i in range(200)
+        ],
+    )
     sink = FakeSink()
     counters = run_miner([first, second], sink, budget=100)
     assert counters.inspected == 100
