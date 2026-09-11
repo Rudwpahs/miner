@@ -82,7 +82,11 @@ class YouTubeRssAdapter:
                     error_count=errors,
                     retry_after=response.headers.get("Retry-After"),
                 )
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError:
+                errors += 1
+                continue
             try:
                 root = ET.fromstring(response.text)
             except ET.ParseError:
