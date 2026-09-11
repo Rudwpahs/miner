@@ -41,3 +41,28 @@ def test_youtube_rss_maps_coaching_and_interview_without_transcript():
     payload = json.dumps([record.model_dump(mode="json") for record in batch.records])
     assert "transcript" not in payload.lower()
     assert "video_bytes" not in payload.lower()
+
+
+def test_youtube_rss_skips_failed_channel_and_continues_to_next():
+    xml = FIXTURE.read_text(encoding="utf-8")
+    failed_channel = "UC0000000000000000000000"
+    working_channel = "UCBo3XgAVBeE74Zw0T77aDhw"
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        channel_id = request.url.params["channel_id"]
+        requested.append(channel_id)
+        if channel_id == failed_channel:
+            return httpx.Response(404, text="not found")
+        return httpx.Response(200, text=xml)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    adapter = YouTubeRssAdapter(
+        channel_ids=(failed_channel, working_channel),
+        client=client,
+    )
+    batch = adapter.fetch(Checkpoint(adapter="youtube_rss"), limit=10)
+
+    assert requested == [failed_channel, working_channel]
+    assert batch.error_count == 1
+    assert [record.stable_id for record in batch.records] == ["coach123", "interview456"]
