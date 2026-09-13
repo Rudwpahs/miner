@@ -35,6 +35,8 @@ class BatchRecord(BaseModel):
 
     @model_validator(mode="after")
     def validate_members(self) -> BatchRecord:
+        if not self.batch_id.startswith(f"V3-{self.stage}-"):
+            raise ValueError("batch_id stage must match stage")
         if len(set(self.candidate_ids)) != len(self.candidate_ids):
             raise ValueError("candidate_ids must be unique")
         if len(self.candidate_ids) != len(self.input_fingerprints):
