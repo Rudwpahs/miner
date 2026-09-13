@@ -49,6 +49,6 @@ def read_jsonl(path: Path) -> list[dict]:
             continue
         value = json.loads(line)
         if not isinstance(value, dict):
-            raise ValueError("JSONL rows must be objects")
+            raise TypeError("JSONL rows must be objects")
         rows.append(value)
     return rows
