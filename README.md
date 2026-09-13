@@ -1,6 +1,6 @@
 # Basketball Knowledge Miner
 
-Public collector for Hooper's Hub / FormPath. V1 is designed to run as a lightweight GitHub Actions batch job every three hours, inspect at most 500 source records per run, keep only basketball-relevant metadata, deduplicate it, and export accepted candidates to a separate private candidate inbox.
+Public collector for Hooper's Hub / FormPath. V1 is designed to run as a lightweight GitHub Actions batch job every three hours, inspect at most 20,000 source records per run, keep only basketball-relevant metadata, deduplicate it, and export accepted candidates to a separate private candidate inbox.
 
 ## V1 sources
 
@@ -18,7 +18,7 @@ The production workflow targets `Rudwpahs/hoopDB`, a separate private candidate-
 
 ## Schedule and limits
 
-The production workflow is configured for `17 */3 * * *` UTC, or eight scheduled runs per day, with a hard 500-record inspection budget per run. GitHub scheduled jobs can start later than the nominal cron time. The design targets no incremental paid API/cloud usage, but GitHub/API policies and quotas can change and are not guaranteed by this project.
+The production workflow is configured for `17 */3 * * *` UTC, or eight scheduled runs per day, with a hard 20,000-record inspection budget per run. This is 40× the prior 500-record ceiling while keeping the same schedule frequency, for a theoretical maximum of 160,000 inspected source records per day. GitHub scheduled jobs can start later than the nominal cron time, and actual exported candidate volume will be lower because duplicate and basketball-relevance filters remain active. The design targets no incremental paid API/cloud usage, but GitHub/API policies and quotas can change and are not guaranteed by this project.
 
 ## Development
 
