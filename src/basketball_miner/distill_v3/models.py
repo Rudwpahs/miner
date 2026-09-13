@@ -10,7 +10,7 @@ BatchStatus = Literal["PENDING", "CLAIMED", "COMPLETE", "FAILED"]
 SourceType = Literal["official", "academic", "coaching", "interview"]
 TriageDecision = Literal["REJECT", "DUPLICATE", "DEEP_PENDING"]
 DeepDecision = Literal["PROPOSE_ACCEPT", "REVIEW", "REJECT"]
-ReviewDecision = Literal["PROPOSE_ACCEPT", "REVIEW", "REJECT"]
+ReviewDecision = Literal["PROPOSE_ACCEPT", "REVIEW", "REJECT", "BLOCKED"]
 JudgeDecision = Literal["CONFIRM", "REVIEW", "REJECT"]
 ConceptAction = Literal["CREATE", "SUPPORT", "REFINE", "CONTRADICT"]
 AuditDecision = Literal["CREATE", "SUPPORT", "REFINE", "CONTRADICT", "REVIEW", "BLOCKED"]
@@ -93,7 +93,7 @@ class SemanticResult(BaseModel):
             "TRIAGE": {"REJECT", "DUPLICATE", "DEEP_PENDING"},
             "DEEP": {"PROPOSE_ACCEPT", "REVIEW", "REJECT"},
             "JUDGE": {"CONFIRM", "REVIEW", "REJECT"},
-            "REVIEW": {"PROPOSE_ACCEPT", "REVIEW", "REJECT"},
+            "REVIEW": {"PROPOSE_ACCEPT", "REVIEW", "REJECT", "BLOCKED"},
         }
         if self.decision not in allowed[self.stage]:
             raise ValueError(f"decision {self.decision!r} is illegal for stage {self.stage}")
