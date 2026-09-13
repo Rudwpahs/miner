@@ -65,6 +65,19 @@ def test_batch_rejects_fingerprint_count_mismatch():
         )
 
 
+def test_batch_rejects_stage_mismatch_with_batch_id():
+    with pytest.raises(ValidationError, match="batch_id stage"):
+        BatchRecord(
+            batch_id="V3-DEEP-0123456789ab",
+            stage="TRIAGE",
+            candidate_ids=["CAND-0123456789abcdef"],
+            priority=50,
+            created_at="2026-09-14T00:00:00Z",
+            input_fingerprints=["0" * 64],
+            status="PENDING",
+        )
+
+
 def test_audit_promotion_rejects_nonconfirm():
     with pytest.raises(ValidationError):
         AuditPromotion(
