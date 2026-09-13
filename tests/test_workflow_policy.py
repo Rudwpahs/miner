@@ -34,6 +34,13 @@ def test_miner_runs_every_three_hours_without_pr_trigger():
     assert "contents: write" in text
 
 
+def test_miner_uses_40x_inspection_budget_without_increasing_schedule_frequency():
+    text = _workflow_text(MINE_WORKFLOW)
+    assert text.count("--budget 20000") == 2
+    assert "--budget 500" not in text
+    assert 'cron: "17 */3 * * *"' in text
+
+
 def test_all_external_actions_are_pinned_to_commit_shas():
     combined = _workflow_text(TEST_WORKFLOW) + _workflow_text(MINE_WORKFLOW)
     uses = re.findall(r"^\s*-?\s*uses:\s*([^\s#]+)", combined, flags=re.MULTILINE)
