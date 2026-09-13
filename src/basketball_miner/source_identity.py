@@ -59,13 +59,13 @@ def compare_titles(observed: str, canonical: str) -> TitleIdentityResult:
     containment = len(left_tokens & right_tokens) / shorter if shorter else 0.0
     longest = max(len(left), len(right))
     length_ratio = min(len(left), len(right)) / longest if longest else 1.0
+    variant = (shorter < 5 and sequence_ratio >= 0.97) or (
+        shorter >= 5
+        and (sequence_ratio >= 0.94 or (containment >= 0.95 and length_ratio >= 0.60))
+    )
     if left == right:
         decision = IdentityDecision.EXACT_MATCH
-    elif shorter < 5 and sequence_ratio >= 0.97:
-        decision = IdentityDecision.HIGH_CONFIDENCE_VARIANT
-    elif shorter >= 5 and (
-        sequence_ratio >= 0.94 or (containment >= 0.95 and length_ratio >= 0.60)
-    ):
+    elif variant:
         decision = IdentityDecision.HIGH_CONFIDENCE_VARIANT
     elif sequence_ratio < 0.75 and containment < 0.80:
         decision = IdentityDecision.MISMATCH
@@ -76,7 +76,7 @@ def compare_titles(observed: str, canonical: str) -> TitleIdentityResult:
 
 def _source_from_message(message: object) -> SourceRecord:
     if not isinstance(message, dict):
-        raise ValueError("invalid Crossref message")
+        raise TypeError("invalid Crossref message")
     doi = str(message.get("DOI", "")).strip()
     titles = message.get("title")
     title = str(titles[0]).strip() if isinstance(titles, list) and titles else ""
@@ -86,10 +86,12 @@ def _source_from_message(message: object) -> SourceRecord:
     for author in message.get("author", []) or []:
         if isinstance(author, dict):
             name = " ".join(
-                value for value in (
+                value
+                for value in (
                     str(author.get("given", "")).strip(),
                     str(author.get("family", "")).strip(),
-                ) if value
+                )
+                if value
             )
             if name:
                 authors.append(name)
@@ -151,7 +153,7 @@ class CrossrefIdentityVerifier:
                     self.sleep_fn(0)
                     continue
                 return self._unverified()
-            if response.status_code == 429 or response.status_code == 404:
+            if response.status_code in {404, 429}:
                 return self._unverified()
             if response.status_code >= 500:
                 if attempt < 2:
