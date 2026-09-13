@@ -7,11 +7,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Stage = Literal["TRIAGE", "DEEP", "JUDGE", "REVIEW", "AUDIT"]
 BatchStatus = Literal["PENDING", "CLAIMED", "COMPLETE", "FAILED"]
+SourceType = Literal["official", "academic", "coaching", "interview"]
 TriageDecision = Literal["REJECT", "DUPLICATE", "DEEP_PENDING"]
 DeepDecision = Literal["PROPOSE_ACCEPT", "REVIEW", "REJECT"]
 ReviewDecision = Literal["PROPOSE_ACCEPT", "REVIEW", "REJECT"]
 JudgeDecision = Literal["CONFIRM", "REVIEW", "REJECT"]
 ConceptAction = Literal["CREATE", "SUPPORT", "REFINE", "CONTRADICT"]
+AuditDecision = Literal["CREATE", "SUPPORT", "REFINE", "CONTRADICT", "REVIEW", "BLOCKED"]
 Route = Literal["TRIAGE", "DUPLICATE", "TERMINAL_INVALID", "TERMINAL_PROCESSED"]
 AuditStatus = Literal["COMPLETED", "BLOCKED"]
 
@@ -65,6 +67,7 @@ class CandidateStageState(BaseModel):
 
     candidate_id: str = Field(pattern=_CANDIDATE_PATTERN)
     source_fingerprint: str = Field(pattern=_FINGERPRINT_PATTERN)
+    source_type: SourceType | None = None
     stage: Stage
     status: BatchStatus
     batch_id: str | None = Field(default=None, pattern=_BATCH_PATTERN)
@@ -94,6 +97,31 @@ class SemanticResult(BaseModel):
         }
         if self.decision not in allowed[self.stage]:
             raise ValueError(f"decision {self.decision!r} is illegal for stage {self.stage}")
+        return self
+
+
+class ShadowAuditResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str = Field(pattern=_CANDIDATE_PATTERN)
+    stage: Literal["AUDIT"]
+    decision: AuditDecision
+    reason_code: str = Field(min_length=1, max_length=120)
+    evidence_refs: list[str] = Field(default_factory=list, max_length=32)
+    knowledge_unit_id: str | None = Field(default=None, min_length=1, max_length=160)
+    concept_id: str | None = Field(default=None, pattern=_CONCEPT_PATTERN)
+    concept_action: ConceptAction | None = None
+
+    @model_validator(mode="after")
+    def validate_audit_decision(self) -> ShadowAuditResult:
+        concept_decisions = {"CREATE", "SUPPORT", "REFINE", "CONTRADICT"}
+        if self.decision in concept_decisions:
+            if self.knowledge_unit_id is None or self.concept_id is None:
+                raise ValueError("audit concept decisions require knowledge_unit_id and concept_id")
+            if self.concept_action != self.decision:
+                raise ValueError("concept_action must match audit concept decision")
+        elif self.concept_action is not None:
+            raise ValueError("REVIEW/BLOCKED audit decisions cannot set concept_action")
         return self
 
 
