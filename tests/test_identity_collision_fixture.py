@@ -42,6 +42,17 @@ class CollectingSink:
         return {"batch_id": batch_id, "count": len(candidates)}
 
 
+def _run(records: list[SourceRecord]):
+    sink = CollectingSink()
+    counters = run_miner(
+        [FixtureAdapter(records)],
+        sink,
+        budget=10,
+        identity_verifier=ExactVerifier(),
+    )
+    return counters, sink.candidates
+
+
 def test_synthetic_supplement_collision_flags_both_candidates_without_winner():
     payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
     records = [
@@ -57,19 +68,44 @@ def test_synthetic_supplement_collision_flags_both_candidates_without_winner():
         )
         for item in payload["records"]
     ]
-    sink = CollectingSink()
 
-    counters = run_miner(
-        [FixtureAdapter(records)],
-        sink,
-        budget=10,
-        identity_verifier=ExactVerifier(),
-    )
+    counters, candidates = _run(records)
 
-    assert len(sink.candidates) == 2
-    assert {candidate.stable_id for candidate in sink.candidates} == {
+    assert len(candidates) == 2
+    assert {candidate.stable_id for candidate in candidates} == {
         "10.1000/supplement-a",
         "10.1000/supplement-b",
     }
-    assert all("DOI_IDENTITY_COLLISION" in candidate.warnings for candidate in sink.candidates)
+    assert all("DOI_IDENTITY_COLLISION" in candidate.warnings for candidate in candidates)
+    assert counters.identity_collisions == 2
+
+
+def test_collision_signature_normalizes_unicode_punctuation():
+    records = [
+        SourceRecord(
+            adapter="crossref",
+            source_type="academic",
+            stable_id="10.1000/punct-a",
+            url="https://doi.org/10.1000/punct-a",
+            title="Basketball—Passing Under Pressure",
+            authors=["Ada Player"],
+            published_at="2026-01-01",
+            summary=None,
+        ),
+        SourceRecord(
+            adapter="crossref",
+            source_type="academic",
+            stable_id="10.1000/punct-b",
+            url="https://doi.org/10.1000/punct-b",
+            title="basketball passing under pressure",
+            authors=["ada player"],
+            published_at="2026-09-01",
+            summary=None,
+        ),
+    ]
+
+    counters, candidates = _run(records)
+
+    assert len(candidates) == 2
+    assert all("DOI_IDENTITY_COLLISION" in candidate.warnings for candidate in candidates)
     assert counters.identity_collisions == 2
