@@ -8,7 +8,12 @@ import pytest
 
 from basketball_miner.distill_v3.github_store import RemoteEntry, RemoteFile
 from basketball_miner.distill_v3.ledger import DistillLedger, ledger_payload
-from basketball_miner.distill_v3.paths import concept_index_path, ledger_path, metrics_path, queue_path
+from basketball_miner.distill_v3.paths import (
+    concept_index_path,
+    ledger_path,
+    metrics_path,
+    queue_path,
+)
 from basketball_miner.distill_v3.prepare import (
     InboxBlob,
     discover_remote_files,
