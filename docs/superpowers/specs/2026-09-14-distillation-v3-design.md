@@ -137,13 +137,15 @@ It does not make semantic ACCEPT decisions.
 
 ## Scheduling policy
 
-The single ChatGPT scheduled task selects work in this order:
+The single ChatGPT scheduled task runs once per hour.
+
+At the first scheduled run after each Asia/Seoul calendar-day boundary, an outstanding audit for the previous day has absolute priority so daily canonicalization cannot starve behind a permanent backlog. At all other runs the scheduler selects work in this order:
 
 1. unresolved REVIEW
 2. JUDGE
 3. DEEP
 4. TRIAGE
-5. AUDIT when due
+5. AUDIT if an exceptional/manual audit is pending
 6. no-op when no semantic work is pending
 
 Initial micro-batch targets:
@@ -255,6 +257,7 @@ Release invariants:
 5. reruns produce no duplicate terminal/canonical records
 6. one batch cannot have two valid simultaneous leases
 7. public miner has no local GPU execution path
+8. each calendar day receives one completed audit or an explicit blocked audit record
 
 ## TDD test groups
 
@@ -268,6 +271,7 @@ Release invariants:
 - immutable staging
 - Judge gate enforcement
 - auditor canonical-writer enforcement
+- daily audit starvation prevention
 - concept CREATE/SUPPORT/REFINE/CONTRADICT behavior
 - metrics invariants
 - public/private compute boundary checks
@@ -279,7 +283,7 @@ Release invariants:
 3. Index existing V2 accepted/review history read-only.
 4. Add V3 queue/staging writers.
 5. Add public CPU preprocessing workflow.
-6. Convert the single ChatGPT daily task into the V3 semantic orchestrator.
+6. Convert the single ChatGPT daily task into the hourly V3 semantic orchestrator.
 7. Run V3 in shadow mode: staging and metrics only.
 8. Compare V3 outcomes with existing B-policy outcomes.
 9. Enable Daily Auditor canonical promotion after invariants pass.
@@ -293,4 +297,4 @@ V3 core does not lower B-policy thresholds, train from raw inbox, require paid A
 
 ## Definition of done
 
-V3 core is complete when deterministic preprocessing is CI-green and idempotent; semantic contracts are structurally validated; Judge-gated promotion is enforced; staging is immutable; only the Auditor promotes canonical output; concepts support CREATE/SUPPORT/REFINE/CONTRADICT; backlog and quality invariants are measurable; the scheduled GPT task is state-driven rather than monolithic; the public CPU/private GPU boundary is enforced; and shadow mode shows no duplicate processing or raw-to-canonical bypass.
+V3 core is complete when deterministic preprocessing is CI-green and idempotent; semantic contracts are structurally validated; Judge-gated promotion is enforced; staging is immutable; only the Auditor promotes canonical output; concepts support CREATE/SUPPORT/REFINE/CONTRADICT; backlog and quality invariants are measurable; the scheduled GPT task is state-driven and hourly rather than monolithic; the previous day cannot be starved of its daily audit; the public CPU/private GPU boundary is enforced; and shadow mode shows no duplicate processing or raw-to-canonical bypass.
