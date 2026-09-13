@@ -14,6 +14,7 @@ import httpx
 from basketball_miner.models import SourceRecord
 
 _TAG_RE = re.compile(r"<[^>]+>")
+_RETRY_DELAYS = (1, 2)
 
 
 class IdentityDecision(str, Enum):
@@ -162,12 +163,12 @@ class CrossrefIdentityVerifier:
                 response = self.client.get(f"{self.endpoint}/{quote(source.stable_id, safe='')}")
             except httpx.TimeoutException:
                 if attempt < 2:
-                    self.sleep_fn(0)
+                    self.sleep_fn(_RETRY_DELAYS[attempt])
                     continue
                 return self._unverified("DOI_TIMEOUT")
             except httpx.RequestError:
                 if attempt < 2:
-                    self.sleep_fn(0)
+                    self.sleep_fn(_RETRY_DELAYS[attempt])
                     continue
                 return self._unverified("DOI_NETWORK_ERROR")
             if response.status_code == 429:
@@ -176,7 +177,7 @@ class CrossrefIdentityVerifier:
                 return self._unverified("DOI_NOT_FOUND")
             if response.status_code >= 500:
                 if attempt < 2:
-                    self.sleep_fn(0)
+                    self.sleep_fn(_RETRY_DELAYS[attempt])
                     continue
                 return self._unverified("DOI_SERVER_ERROR")
             if response.status_code >= 400:
