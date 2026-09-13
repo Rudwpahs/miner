@@ -86,3 +86,23 @@ def test_ledger_payload_is_deterministic_and_json_safe():
         "CAND-aaaaaaaaaaaaaaaa",
         "CAND-bbbbbbbbbbbbbbbb",
     ]
+
+
+def test_record_route_preserves_source_type_for_future_stage_priority():
+    candidate = load_candidates()[0]
+    ledger = DistillLedger()
+    route = route_candidate(candidate, ledger)
+    ledger.record_route(candidate, route)
+    assert ledger.candidate_states[candidate.candidate_id].source_type == candidate.source_type
+
+
+def test_ledger_serializes_materializer_replay_guards_deterministically():
+    ledger = DistillLedger(
+        processed_staging_shas={"b" * 40, "a" * 40},
+        completed_batch_ids={"V3-TRIAGE-111111111111"},
+        parked_review_candidate_ids={"CAND-1111111111111111"},
+    )
+    payload = ledger_payload(ledger)
+    assert payload["processed_staging_shas"] == ["a" * 40, "b" * 40]
+    assert payload["completed_batch_ids"] == ["V3-TRIAGE-111111111111"]
+    assert payload["parked_review_candidate_ids"] == ["CAND-1111111111111111"]
