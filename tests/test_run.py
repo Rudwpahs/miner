@@ -46,12 +46,23 @@ class FakeSink:
         return {"batch_id": batch_id, "count": len(candidates)}
 
 
-def test_run_never_inspects_more_than_500():
-    adapter = FakeAdapter("fake", [make_source(i) for i in range(700)])
+def test_run_accepts_40x_budget_ceiling():
+    adapter = FakeAdapter("fake", [make_source(1)])
     sink = FakeSink()
-    counters = run_miner([adapter], sink, budget=500)
-    assert counters.inspected == 500
-    assert counters.exported == 500
+    counters = run_miner([adapter], sink, budget=20_000)
+    assert counters.inspected == 1
+    assert counters.exported == 1
+
+
+def test_run_rejects_budget_above_40x_ceiling():
+    adapter = FakeAdapter("fake", [make_source(1)])
+    sink = FakeSink()
+    try:
+        run_miner([adapter], sink, budget=20_001)
+    except ValueError as exc:
+        assert "between 1 and 20000" in str(exc)
+    else:
+        raise AssertionError("budget above 20,000 must be rejected")
 
 
 def test_run_allocates_budget_across_adapters():
