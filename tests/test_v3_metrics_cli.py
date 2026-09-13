@@ -5,6 +5,9 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+from pydantic import ValidationError
+
 from basketball_miner.distill_v3.metrics import (
     DailyMetrics,
     audit_due,
@@ -32,6 +35,11 @@ def test_hard_release_invariants_are_machine_readable_and_ordered():
 
 def test_all_zero_hard_invariants_pass():
     assert check_release_invariants(DailyMetrics(date="2026-09-14")) == []
+
+
+def test_backlog_counts_cannot_be_negative():
+    with pytest.raises(ValidationError):
+        DailyMetrics(date="2026-09-14", backlog_by_stage={"TRIAGE": -1})
 
 
 def test_previous_seoul_day_is_due_without_audit_record():
