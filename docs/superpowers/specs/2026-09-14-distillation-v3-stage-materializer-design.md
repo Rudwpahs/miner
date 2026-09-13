@@ -1,7 +1,7 @@
 # Distillation V3 Stage Materializer Design
 
 Date: 2026-09-14
-Status: Approved architecture, awaiting implementation-plan approval
+Status: Approved architecture, awaiting user spec review
 Branch: `work/distillation-v3`
 Parent specs:
 - `docs/superpowers/specs/2026-09-14-distillation-v3-design.md`
@@ -42,7 +42,7 @@ This subsystem will **not**:
 
 ## Storage boundaries
 
-Read-only historical/private inputs:
+Read-only inputs:
 
 ```text
 ml/coach/miner-data/v3/queues/{triage,deep,judge,review,audit}/
@@ -51,7 +51,7 @@ ml/coach/miner-data/v3/ledgers/distill.json
 ml/coach/miner-data/v3/leases/
 ```
 
-Materializer writes only under:
+Materializer writes only:
 
 ```text
 ml/coach/miner-data/v3/queues/{deep,judge,review,audit}/
@@ -91,7 +91,7 @@ Stage Materializer
 optimistic ledger update
 ```
 
-The hourly public CPU workflow becomes:
+Hourly public CPU workflow order:
 
 ```text
 1. private-repo preflight
@@ -102,11 +102,11 @@ The hourly public CPU workflow becomes:
 6. emit summary
 ```
 
-Stage advancement happens before new inbox preparation so completed semantic work is never starved by continuous Miner ingestion.
+Stage advancement happens before new inbox preparation so completed semantic work cannot starve behind continuous Miner ingestion.
 
-## New ledger state
+## Ledger extensions
 
-The existing `DistillLedger` remains the single mutable semantic-state ledger. It is extended with deterministic replay guards:
+`DistillLedger` remains the single mutable semantic-state ledger and gains:
 
 ```text
 processed_staging_shas: set[str]
@@ -116,13 +116,28 @@ parked_review_candidate_ids: set[str]
 
 Semantics:
 
-- `processed_staging_shas`: staging blobs already fully and successfully materialized.
-- `completed_batch_ids`: source semantic batches whose validated output has already been committed.
-- `parked_review_candidate_ids`: unresolved review items that have already completed a REVIEW attempt but still require evidence; they are not immediately requeued into REVIEW.
+- `processed_staging_shas`: staging blobs already fully materialized.
+- `completed_batch_ids`: semantic source batches already completed.
+- `parked_review_candidate_ids`: unresolved REVIEW results that must not be immediately requeued.
 
-Existing fields continue to track candidate states, terminal candidates, source hashes, and processed inbox blobs.
+### Candidate routing metadata
 
-A staging SHA is added only after the entire staging file validates and all deterministic transitions for that file are successfully represented in the returned in-memory result. Persistent mutation follows the same optimistic-SHA discipline already used by V3 shadow preparation.
+The current `CandidateStageState` does not retain enough information to reconstruct per-candidate destination priority after TRIAGE. The implementation therefore extends it with a backward-compatible field:
+
+```text
+source_type: academic | official | coaching | interview | null
+```
+
+Rules:
+
+- new candidates routed from inbox must store `source_type` in `CandidateStageState`;
+- forward stage materialization requires `source_type` so `priority_for(source_type, destination_stage)` can be recomputed deterministically per candidate;
+- old persisted V3 states may omit it because the field defaults to `null`;
+- a legacy state without `source_type` cannot be silently assigned a guessed priority: materialization is blocked for that candidate until the source metadata is rehydrated from its original inbox record or another authoritative stored source record.
+
+This avoids using a source batch's max priority as a lossy per-candidate substitute.
+
+A staging SHA is added to `processed_staging_shas` only after the entire staging file validates and all transitions are represented in the returned in-memory result.
 
 ## Staging file identity and atomicity
 
@@ -140,48 +155,26 @@ input_fingerprints
 records
 ```
 
-The materializer treats the staging file as an atomic unit.
+Before any transition is applied, the whole file must satisfy:
 
-Before any candidate transition is applied, it validates all of the following:
-
-1. `batch_id` resolves to an existing source queue file.
-2. source queue stage exactly equals staging stage.
-3. source batch is not already completed unless this is an exact idempotent replay.
-4. staging record candidate IDs exactly equal the source batch candidate IDs; no missing or extra candidates.
+1. `batch_id` resolves to an existing queue file.
+2. queue stage exactly equals staging stage.
+3. batch is not completed unless this is an exact idempotent replay.
+4. staging candidate IDs exactly equal source batch candidate IDs; no missing or extra candidates.
 5. candidate IDs are unique.
-6. staging `input_fingerprints` exactly match the source batch fingerprints in the same candidate mapping.
-7. every decision is legal for that stage.
+6. staging input fingerprints exactly match the source batch candidate-to-fingerprint mapping.
+7. every record uses a decision legal for that stage.
 8. every record preserves its source candidate ID.
 9. no record attempts canonical promotion.
 10. no record instructs raw-to-training use.
 
-If any row fails, the entire staging blob is rejected from advancement. No partial queue or ledger state is produced for that blob.
+Any failure rejects the entire staging blob from advancement. No partial state or queue is produced.
 
-## Legal stage transitions
+## Semantic result models
 
-### TRIAGE
+Existing `SemanticResult` remains authoritative for TRIAGE, DEEP, JUDGE, and REVIEW.
 
-Allowed semantic decisions:
-
-```text
-REJECT
-DUPLICATE
-DEEP_PENDING
-```
-
-Materialization:
-
-```text
-REJECT       -> terminal candidate
-DUPLICATE    -> terminal candidate
-DEEP_PENDING -> DEEP queue
-```
-
-Triage never ACCEPTs and never creates JUDGE or AUDIT work directly.
-
-### DEEP
-
-Allowed semantic decisions:
+The existing REVIEW contract is retained exactly:
 
 ```text
 PROPOSE_ACCEPT
@@ -189,65 +182,76 @@ REVIEW
 REJECT
 ```
 
-Materialization:
+There is **no new REVIEW `BLOCKED` decision** in this phase. When evidence is inaccessible, REVIEW is used with a `reason_code` that states the blocking prerequisite, and the candidate is parked.
+
+### New shadow AUDIT result model
+
+The current Core lacks a candidate-level AUDIT staging model, so this phase adds a separate model rather than overloading `SemanticResult`:
+
+```text
+ShadowAuditResult
+  candidate_id
+  stage = AUDIT
+  decision = CREATE | SUPPORT | REFINE | CONTRADICT | REVIEW | BLOCKED
+  reason_code
+  knowledge_unit_id | null
+  concept_id | null
+  evidence_refs[]
+```
+
+Rules:
+
+- `CREATE|SUPPORT|REFINE|CONTRADICT` require the relevant knowledge/concept identifiers required by the approved audit contract;
+- `REVIEW|BLOCKED` do not promote and instead park the candidate;
+- during SHADOW MODE this model is evidence/state only and cannot write canonical V2 outputs.
+
+`DailyAuditRecord(status=COMPLETED|BLOCKED)` remains the day-level audit completion record and is not replaced by `ShadowAuditResult`.
+
+## Legal stage transitions
+
+### TRIAGE
+
+```text
+REJECT       -> terminal
+DUPLICATE    -> terminal
+DEEP_PENDING -> DEEP queue
+```
+
+Triage never ACCEPTs and never creates JUDGE/AUDIT work directly.
+
+### DEEP
 
 ```text
 PROPOSE_ACCEPT -> JUDGE queue
-REVIEW         -> REVIEW queue, unless already parked for unresolved review
-REJECT         -> terminal candidate
+REVIEW         -> REVIEW queue unless currently parked
+REJECT         -> terminal
 ```
 
 Deep never canonicalizes.
 
 ### JUDGE
 
-Allowed semantic decisions:
-
-```text
-CONFIRM
-REVIEW
-REJECT
-```
-
-Materialization during SHADOW MODE:
-
 ```text
 CONFIRM -> AUDIT queue
-REVIEW  -> REVIEW queue, unless already parked for unresolved review
-REJECT  -> terminal candidate
+REVIEW  -> REVIEW queue unless currently parked
+REJECT  -> terminal
 ```
 
-`CONFIRM` is not canonical acceptance. It is only an audited-promotion candidate in immutable V3 shadow state.
+`CONFIRM` is not canonical acceptance. In SHADOW MODE it only creates AUDIT work.
 
 ### REVIEW
 
-Allowed semantic decisions:
-
-```text
-PROPOSE_ACCEPT
-REJECT
-REVIEW
-BLOCKED
-```
-
-Materialization:
-
 ```text
 PROPOSE_ACCEPT -> JUDGE queue
-REJECT         -> terminal candidate
-REVIEW         -> park as ACTIVE_REVIEW; do not immediately requeue
-BLOCKED        -> park as ACTIVE_REVIEW/BLOCKED with blocking prerequisite
+REJECT         -> terminal
+REVIEW         -> park as ACTIVE_REVIEW; no immediate requeue
 ```
 
-This rule prevents REVIEW -> REVIEW infinite loops on every hourly execution.
-
-A future semantic run may explicitly reactivate parked review candidates after new evidence, source availability, or a manual review-refresh operation. Automatic reactivation is outside this materializer's initial scope.
+A parked REVIEW record keeps its `reason_code`/blocking prerequisite in the staging evidence. Automatic reactivation is outside initial materializer scope.
 
 ### AUDIT
 
-In the current SHADOW MODE, AUDIT staging is terminal shadow evidence only.
-
-Allowed decisions:
+Allowed `ShadowAuditResult.decision`:
 
 ```text
 CREATE
@@ -261,50 +265,54 @@ BLOCKED
 Materialization:
 
 - mark the AUDIT batch completed;
-- update candidate state to `AUDIT/COMPLETE` or parked REVIEW/BLOCKED as appropriate;
-- do **not** write canonical accepted/review/manifest files;
-- do not create another semantic queue automatically.
+- `CREATE|SUPPORT|REFINE|CONTRADICT` become completed shadow-audit evidence only;
+- `REVIEW|BLOCKED` park the candidate;
+- create no next semantic queue automatically;
+- write no canonical accepted/review/manifest output.
 
-Canonical promotion remains disabled until a separate rollout gate explicitly changes SHADOW MODE.
+Canonical promotion remains disabled until a later explicit rollout gate.
 
-## Next-queue construction
+## Deterministic next-queue construction
 
-Next queues reuse the existing deterministic `build_batches()` and stable V3 batch-ID rules.
+Next queues reuse `build_batches()` and stable V3 batch IDs.
 
-For each destination stage:
+Per destination stage:
 
-1. collect candidate IDs that legally transition there;
-2. preserve source fingerprints from ledger/source queue data;
-3. compute deterministic priority with existing stage/source priority rules;
-4. sort deterministically;
-5. group using the existing stage-specific maximum batch-size policy;
-6. write each destination queue immutably.
+1. collect legal transitioning candidates;
+2. retrieve each candidate's source fingerprint from ledger/source batch state;
+3. require `CandidateStageState.source_type`;
+4. compute `priority_for(source_type, destination_stage)` per candidate;
+5. sort deterministically using existing queue logic;
+6. group by explicit destination batch cap;
+7. write destination queue immutably.
 
-A pre-existing next queue with identical bytes is an idempotent success.
-A pre-existing queue path with different bytes is a hard conflict and aborts the materialization write set.
+Initial destination caps are fixed to the approved scheduling targets:
 
-No rename-on-collision behavior is allowed.
+```text
+DEEP   = 30
+JUDGE  = 30
+REVIEW = 20
+AUDIT  = 30
+```
 
-## Batch completion and lease semantics
+TRIAGE remains prepared separately by the existing preparer, with its current configurable cap up to 100.
 
-A source semantic batch becomes `COMPLETE` only after its full staging output has passed validation and the materializer has produced a deterministic transition result.
+A pre-existing next queue with identical bytes is idempotent success. Different bytes at the same deterministic path are a hard conflict; no rename/overwrite is allowed.
 
-After batch completion:
+## Batch completion and leases
 
-- the batch ID is placed in `completed_batch_ids`;
-- all relevant candidate states are advanced;
-- its staging SHA is placed in `processed_staging_shas`;
-- future Orchestrator selection must exclude the completed batch even if an old lease later expires.
+A source semantic batch becomes complete only after its full staging file validates and deterministic transitions have been computed.
 
-Leases remain claim guards for in-flight work, not completion markers.
+After completion:
 
-This distinction closes the retry bug where a completed batch could otherwise become claimable again after lease expiration.
+- add batch ID to `completed_batch_ids`;
+- advance all candidate states;
+- add staging SHA to `processed_staging_shas`;
+- future Orchestrator selection must exclude the completed batch even after its lease expires.
 
-## Candidate-state updates
+Leases are only in-flight claim guards. They are not completion markers.
 
-For each materialized record, `CandidateStageState` is advanced deterministically.
-
-Examples:
+## Candidate state examples
 
 ```text
 TRIAGE DEEP_PENDING:
@@ -321,15 +329,16 @@ REVIEW REVIEW:
 
 REJECT/DUPLICATE:
   current-stage/COMPLETE + terminal_candidate_ids
+
+AUDIT CREATE/SUPPORT/REFINE/CONTRADICT:
+  AUDIT/COMPLETE
 ```
 
-The transition timestamp comes from the materializer run timestamp, while source fingerprint remains unchanged.
+Source fingerprint never changes across stage transitions. Source type also remains stable.
 
-An existing candidate state with an incompatible stage/fingerprint is a hard conflict.
+An incompatible existing stage, fingerprint, or source type is a hard conflict.
 
-## Materializer result model
-
-Pure deterministic core:
+## Pure materializer interface
 
 ```python
 @dataclass(frozen=True)
@@ -356,36 +365,38 @@ materialize_staging(
 ) -> StageMaterialization
 ```
 
-This function performs no network or filesystem I/O.
+This function performs no HTTP/filesystem writes.
 
-Remote orchestration is a separate helper that:
+Remote orchestration separately:
 
 1. discovers staging files recursively;
-2. loads source queue files referenced by unprocessed staging blobs;
-3. calls the pure core;
-4. validates hard invariants;
-5. creates immutable next queues first;
-6. updates ledger/metrics with the observed remote SHA;
-7. returns a machine-readable summary.
+2. loads queue files referenced by unprocessed staging blobs;
+3. rehydrates missing legacy source type only from authoritative candidate/source data;
+4. calls the pure core;
+5. validates hard invariants;
+6. preflights all immutable queue destinations;
+7. writes missing next queues;
+8. optimistic-SHA updates ledger/metrics;
+9. returns a machine-readable summary.
 
-## Write ordering and fail-closed behavior
+## Write ordering and recovery
 
-Because GitHub Contents API does not offer a multi-file transaction, writes use a recoverable ordering:
+GitHub Contents API is not transactional, so writes use recoverable ordering:
 
-1. fully compute and validate the entire materialization in memory;
-2. preflight every immutable destination queue path by reading it;
-3. if any path conflicts with different bytes, abort before any write;
+1. compute and validate full materialization in memory;
+2. preflight every immutable destination path;
+3. abort before writes if any different-byte collision exists;
 4. create missing immutable next queues;
 5. optimistic-SHA update ledger;
 6. optimistic-SHA update metrics.
 
-If the process fails after immutable queue creation but before ledger update, rerun sees the exact same queue bytes and treats those queue writes idempotently. The ledger is then safely retried.
+If execution dies after queue creation but before ledger update, the retry sees identical queue bytes and treats them idempotently, then safely retries the ledger update.
 
-The materializer never performs a blind mutable overwrite.
+No blind mutable overwrite is permitted.
 
 ## Hard invariants
 
-Every run must keep these values at zero:
+Must remain zero:
 
 ```text
 raw_to_training_bypass
@@ -396,52 +407,54 @@ audit_duplicate_leakage
 illegal_stage_transition
 staging_candidate_set_mismatch
 staging_fingerprint_mismatch
+source_type_rehydration_failure_after_write
 ```
 
-Additional release invariants:
+Release invariants:
 
-1. a staging SHA is processed at most once semantically;
-2. a completed source batch is never re-claimed solely because its lease expired;
-3. no partial candidate advancement occurs from a malformed staging blob;
+1. each staging SHA is semantically materialized at most once;
+2. completed batches cannot become eligible again merely because leases expire;
+3. malformed staging never causes partial advancement;
 4. Triage cannot create ACCEPT/JUDGE/AUDIT directly;
 5. Deep cannot canonicalize;
-6. Judge CONFIRM creates AUDIT work only during SHADOW MODE;
-7. repeated REVIEW does not generate an infinite hourly queue loop;
-8. immutable next queue collisions fail closed;
-9. mutable ledger/metrics writes are optimistic-SHA only;
-10. canonical V2 output paths remain untouched.
+6. Judge CONFIRM creates AUDIT work only in SHADOW MODE;
+7. repeated REVIEW is parked instead of infinitely requeued;
+8. immutable queue collisions fail closed;
+9. mutable ledger/metrics are optimistic-SHA only;
+10. canonical V2 paths remain untouched;
+11. destination priority is recomputed from preserved source type, never guessed from source-batch max priority.
 
 ## Hourly workflow integration
 
-The existing `.github/workflows/distill_v3_prepare.yml` remains the only new public V3 CPU write workflow.
+`.github/workflows/distill_v3_prepare.yml` remains the only V3 public CPU write workflow.
 
-Its script evolves from preparation-only behavior to a two-phase deterministic cycle:
+Its deterministic cycle becomes:
 
 ```text
 PHASE A: MATERIALIZE
-  discover unprocessed semantic staging
+  discover unprocessed staging
   validate and advance stages
   persist next queues/ledger/metrics
 
 PHASE B: PREPARE
   discover new Miner inbox blobs
-  exact dedup / historical checks
+  exact dedup/history checks
   persist TRIAGE queues/ledger/metrics
 ```
 
-The schedule remains:
+Schedule remains:
 
 ```text
 42 * * * * UTC
 ```
 
-No change is made to Miner `mine.yml` 3-hour/20,000 inspection configuration.
+Miner `mine.yml` remains unchanged at `17 */3 * * *` and `--budget 20000`.
 
 Manual workflow dispatch remains dry-run by default unless `write_shadow=true` is explicitly selected.
 
-## Orchestrator contract change
+## Orchestrator contract tightening
 
-The Orchestrator prompt must be tightened so batch eligibility requires:
+Batch eligibility must require:
 
 ```text
 batch.status == PENDING
@@ -449,15 +462,11 @@ batch_id not in ledger.completed_batch_ids
 no active lease for batch_id
 ```
 
-The Orchestrator still claims exactly one eligible batch per hourly run.
+The Orchestrator claims exactly one eligible batch per run.
 
-It never creates the next semantic queue itself. It only writes the immutable staging output for its current batch. The Stage Materializer is the sole owner of deterministic next-queue creation.
+It writes only its immutable staging result. It does **not** create next-stage queues or directly advance the ledger. The Stage Materializer is the sole deterministic owner of next-queue creation.
 
-This removes state-machine mutation from the semantic worker and prevents competing queue-generation logic.
-
-## Metrics
-
-Add materializer metrics:
+## Metrics additions
 
 ```text
 staging_files_seen
@@ -471,42 +480,47 @@ next_batches_created_by_stage
 illegal_stage_transition
 staging_candidate_set_mismatch
 staging_fingerprint_mismatch
+legacy_source_type_rehydrations
 ```
 
-Existing DailyMetrics hard release invariants remain authoritative.
+Existing `DailyMetrics` release invariants remain authoritative.
 
 ## TDD requirements
 
-Implementation must be test-first.
+Implementation is test-first.
 
-Core tests must cover:
+Required tests:
 
-1. TRIAGE `DEEP_PENDING` -> deterministic DEEP queue.
-2. TRIAGE `REJECT`/`DUPLICATE` -> terminal state.
+1. TRIAGE `DEEP_PENDING` -> DEEP queue.
+2. TRIAGE `REJECT`/`DUPLICATE` -> terminal.
 3. DEEP `PROPOSE_ACCEPT` -> JUDGE.
 4. DEEP `REVIEW` -> REVIEW.
-5. JUDGE `CONFIRM` -> AUDIT, never canonical output.
+5. JUDGE `CONFIRM` -> AUDIT, never canonical.
 6. JUDGE `REVIEW` -> REVIEW.
 7. REVIEW `PROPOSE_ACCEPT` -> JUDGE.
-8. REVIEW `REVIEW`/`BLOCKED` -> parked, no immediate requeue.
-9. AUDIT staging completes without canonical writes in SHADOW MODE.
-10. exact candidate-set validation.
-11. exact input-fingerprint validation.
-12. illegal decision for stage blocks the whole staging blob.
-13. malformed one-row record blocks the whole staging blob.
-14. completed batch is not processed twice.
-15. processed staging SHA is skipped idempotently.
-16. deterministic output independent of staging-discovery order.
-17. next queue max sizes and stable IDs are deterministic.
-18. queue same-byte collision is idempotent.
-19. queue different-byte collision aborts before writes.
-20. observed-SHA ledger update is enforced.
-21. canonical V2 path write attempts are absent/rejected.
-22. Orchestrator prompt excludes completed batches from eligibility.
-23. hourly workflow still runs materialize before prepare.
-24. Miner `mine.yml` remains 3-hour/20,000.
+8. REVIEW `REVIEW` -> parked/no immediate requeue.
+9. AUDIT `CREATE|SUPPORT|REFINE|CONTRADICT` -> shadow complete only.
+10. AUDIT `REVIEW|BLOCKED` -> parked.
+11. exact candidate-set validation.
+12. exact candidate/fingerprint mapping validation.
+13. illegal decision blocks entire staging blob.
+14. malformed one-row record blocks entire staging blob.
+15. completed batch cannot process twice.
+16. processed staging SHA rerun is no-op.
+17. output is deterministic regardless of staging discovery order.
+18. next queue caps and IDs are deterministic.
+19. per-candidate destination priority uses preserved source type.
+20. missing legacy source type fails closed unless authoritatively rehydrated.
+21. same-byte queue collision is idempotent.
+22. different-byte queue collision aborts before writes.
+23. observed-SHA ledger update enforced.
+24. canonical V2 path writes absent/rejected.
+25. Orchestrator excludes completed batches.
+26. workflow runs MATERIALIZE before PREPARE.
+27. Miner schedule/budget remains 3-hour/20,000.
+28. `ShadowAuditResult` validation is strict and separate from `DailyAuditRecord`.
 
-## Files expected to change
+## Expected files
 
 Create:
 
@@ -518,32 +532,35 @@ tests/test_v3_materialize.py
 Modify:
 
 ```text
+src/basketball_miner/distill_v3/models.py
 src/basketball_miner/distill_v3/ledger.py
 src/basketball_miner/distill_v3/metrics.py
 src/basketball_miner/distill_v3/prepare.py
 scripts/run_distill_v3_prepare.py
 docs/formpath-v3-orchestrator-prompt.md
+tests/test_v3_models.py
+tests/test_v3_ledger_router.py
 tests/test_v3_prepare_remote.py
 tests/test_v3_orchestrator_contract.py
 tests/test_workflow_policy.py
 ```
 
-No new third-party runtime dependency is permitted.
+No new third-party runtime dependency is allowed.
 
 ## Rollout gate
 
 After implementation:
 
-1. full pytest and Ruff must pass at branch HEAD;
-2. compare against the approved 40x base must remain ahead-only;
-3. `mine.yml` must still contain `--budget 20000` twice and `17 */3 * * *`;
-4. no newly added code may target canonical V2 write paths;
+1. full pytest and Ruff pass at branch HEAD;
+2. compare against approved 40x base remains ahead-only;
+3. `mine.yml` still contains `--budget 20000` twice and `17 */3 * * *`;
+4. no new code targets canonical V2 write paths;
 5. branch remains unmerged until explicit integration choice;
-6. after merge, run one V3 dry-run;
+6. after integration, run one V3 dry-run;
 7. run one shadow write;
-8. verify `hoopDB` contains legal next-stage queues/updated ledger only under V3 root;
-9. only after that successful shadow gate may the live `FormPath Daily Distillation` automation be converted into the hourly V3 Orchestrator.
+8. verify `hoopDB` contains only legal next-stage queues/updated ledger under V3 root;
+9. only after the shadow gate succeeds may the live `FormPath Daily Distillation` automation be converted into the hourly V3 Orchestrator.
 
 ## Definition of done
 
-The Stage Materializer is complete when every valid immutable semantic staging output can be deterministically advanced to the correct next V3 state; malformed/conflicting staging fails atomically; completed batches cannot be reclaimed after lease expiry; REVIEW loops are parked rather than endlessly requeued; all writes remain confined to the V3 root; Judge CONFIRM remains shadow-only and creates AUDIT work rather than canonical acceptance; retries are idempotent; and the hourly deterministic workflow can continuously advance `TRIAGE -> DEEP -> JUDGE -> REVIEW/AUDIT` without requiring the semantic Orchestrator to mutate the state machine itself.
+The Stage Materializer is complete when every valid immutable semantic staging output can be deterministically advanced to the correct next V3 state; malformed/conflicting staging fails atomically; per-candidate priority is reconstructed from preserved source type rather than guessed; completed batches cannot be reclaimed after lease expiry; REVIEW loops are parked; AUDIT has a strict shadow-only result contract; all writes remain confined to the V3 root; Judge CONFIRM creates AUDIT work rather than canonical acceptance; retries are idempotent; and the hourly deterministic workflow can continuously advance `TRIAGE -> DEEP -> JUDGE -> REVIEW/AUDIT` without requiring the semantic Orchestrator to mutate the state machine itself.
