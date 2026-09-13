@@ -1,14 +1,21 @@
 from basketball_miner.models import Checkpoint, SourceRecord
 from basketball_miner.run import run_miner
+from basketball_miner.source_identity import IdentityDecision, SourceIdentityResult
 from basketball_miner.sources.base import AdapterBatch
 
 
 def make_source(index: int, *, adapter: str = "fake", title: str | None = None) -> SourceRecord:
+    stable_id = f"item-{index}" if adapter != "crossref" else f"10.1000/item-{index}"
+    url = (
+        f"https://example.org/{adapter}/{index}"
+        if adapter != "crossref"
+        else f"https://doi.org/{stable_id}"
+    )
     return SourceRecord(
         adapter=adapter,
         source_type="academic",
-        stable_id=f"item-{index}",
-        url=f"https://example.org/{adapter}/{index}",
+        stable_id=stable_id,
+        url=url,
         title=title or f"Basketball jump shot release angle {index}",
         authors=["Test Author"],
         published_at="2026-09-01",
@@ -44,6 +51,16 @@ class FakeSink:
         self.batch_ids.append(batch_id)
         self.candidates.extend(candidates)
         return {"batch_id": batch_id, "count": len(candidates)}
+
+
+class FakeIdentityVerifier:
+    def __init__(self, results: dict[str, SourceIdentityResult]) -> None:
+        self.results = results
+        self.calls: list[str] = []
+
+    def verify(self, source: SourceRecord) -> SourceIdentityResult:
+        self.calls.append(source.stable_id)
+        return self.results[source.stable_id]
 
 
 def test_run_never_inspects_more_than_500():
@@ -103,3 +120,102 @@ def test_run_uses_supplied_run_id_in_export_batch_names():
     sink = FakeSink()
     run_miner([adapter], sink, budget=10, run_id="RUN-20260911T001500Z")
     assert sink.batch_ids == ["RUN-20260911T001500Z-fake-0001"]
+
+
+def test_crossref_identity_exports_canonical_metadata_and_warning():
+    observed = make_source(1, adapter="crossref", title="Basketball passing under pressure")
+    canonical = observed.model_copy(
+        update={"title": "Basketball passing decisions under defensive pressure"}
+    )
+    verifier = FakeIdentityVerifier(
+        {
+            observed.stable_id: SourceIdentityResult(
+                IdentityDecision.MISMATCH,
+                canonical,
+                ("DOI_TITLE_MISMATCH", "DOI_CANONICAL_METADATA_USED"),
+            )
+        }
+    )
+    sink = FakeSink()
+
+    counters = run_miner(
+        [FakeAdapter("crossref", [observed])],
+        sink,
+        budget=10,
+        identity_verifier=verifier,
+    )
+
+    assert sink.candidates[0].title == canonical.title
+    assert "DOI_TITLE_MISMATCH" in sink.candidates[0].warnings
+    assert counters.identity_mismatches == 1
+    assert counters.identity_verified == 1
+
+
+def test_crossref_identity_rechecks_canonical_relevance_and_drops_false_hit():
+    observed = make_source(1, adapter="crossref", title="Basketball passing under pressure")
+    canonical = observed.model_copy(update={"title": "Nutrition in soccer players"})
+    verifier = FakeIdentityVerifier(
+        {observed.stable_id: SourceIdentityResult(IdentityDecision.MISMATCH, canonical)}
+    )
+    sink = FakeSink()
+
+    counters = run_miner(
+        [FakeAdapter("crossref", [observed])],
+        sink,
+        budget=10,
+        identity_verifier=verifier,
+    )
+
+    assert sink.candidates == []
+    assert counters.exported == 0
+    assert counters.identity_mismatches == 1
+
+
+def test_crossref_unverified_preserves_observed_candidate_with_warning():
+    observed = make_source(1, adapter="crossref")
+    verifier = FakeIdentityVerifier(
+        {
+            observed.stable_id: SourceIdentityResult(
+                IdentityDecision.UNVERIFIED,
+                None,
+                ("DOI_IDENTITY_UNVERIFIED",),
+            )
+        }
+    )
+    sink = FakeSink()
+
+    counters = run_miner(
+        [FakeAdapter("crossref", [observed])],
+        sink,
+        budget=10,
+        identity_verifier=verifier,
+    )
+
+    assert sink.candidates[0].title == observed.title
+    assert sink.candidates[0].warnings == ["DOI_IDENTITY_UNVERIFIED"]
+    assert counters.identity_unverified == 1
+
+
+def test_crossref_same_signature_different_dois_flags_collision_in_batch():
+    first = make_source(1, adapter="crossref", title="Basketball passing biomechanics")
+    second = make_source(2, adapter="crossref", title="Basketball passing biomechanics")
+    canonical_first = first.model_copy(update={"authors": ["Same Author"]})
+    canonical_second = second.model_copy(update={"authors": ["Same Author"]})
+    verifier = FakeIdentityVerifier(
+        {
+            first.stable_id: SourceIdentityResult(IdentityDecision.EXACT_MATCH, canonical_first),
+            second.stable_id: SourceIdentityResult(IdentityDecision.EXACT_MATCH, canonical_second),
+        }
+    )
+    sink = FakeSink()
+
+    counters = run_miner(
+        [FakeAdapter("crossref", [first, second])],
+        sink,
+        budget=10,
+        identity_verifier=verifier,
+    )
+
+    assert len(sink.candidates) == 2
+    assert all("DOI_IDENTITY_COLLISION" in item.warnings for item in sink.candidates)
+    assert counters.identity_collisions == 2
