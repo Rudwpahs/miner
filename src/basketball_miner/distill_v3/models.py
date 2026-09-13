@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -33,16 +34,16 @@ class BatchRecord(BaseModel):
     status: BatchStatus
 
     @model_validator(mode="after")
-    def validate_members(self) -> "BatchRecord":
+    def validate_members(self) -> BatchRecord:
         if len(set(self.candidate_ids)) != len(self.candidate_ids):
             raise ValueError("candidate_ids must be unique")
         if len(self.candidate_ids) != len(self.input_fingerprints):
             raise ValueError("candidate_ids and input_fingerprints length mismatch")
         for candidate_id in self.candidate_ids:
-            if not __import__("re").fullmatch(_CANDIDATE_PATTERN, candidate_id):
+            if not re.fullmatch(_CANDIDATE_PATTERN, candidate_id):
                 raise ValueError("malformed candidate_id")
         for digest in self.input_fingerprints:
-            if not __import__("re").fullmatch(_FINGERPRINT_PATTERN, digest):
+            if not re.fullmatch(_FINGERPRINT_PATTERN, digest):
                 raise ValueError("malformed input fingerprint")
         return self
 
@@ -82,7 +83,7 @@ class SemanticResult(BaseModel):
     concept_action: ConceptAction | None = None
 
     @model_validator(mode="after")
-    def validate_stage_decision(self) -> "SemanticResult":
+    def validate_stage_decision(self) -> SemanticResult:
         allowed = {
             "TRIAGE": {"REJECT", "DUPLICATE", "DEEP_PENDING"},
             "DEEP": {"PROPOSE_ACCEPT", "REVIEW", "REJECT"},
