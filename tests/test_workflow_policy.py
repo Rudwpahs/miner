@@ -52,3 +52,10 @@ def test_all_external_actions_are_pinned_to_commit_shas():
 def test_no_shell_command_echoes_export_secret():
     text = _workflow_text(MINE_WORKFLOW)
     assert not re.search(r"(?im)^\s*run:.*(?:echo|printf).*HOOPHUB_MINER_TOKEN", text)
+
+
+def test_public_workflows_have_no_self_hosted_gpu_execution():
+    combined = _workflow_text(TEST_WORKFLOW) + _workflow_text(MINE_WORKFLOW)
+    assert "self-hosted" not in combined
+    assert "cuda" not in combined.casefold()
+    assert "formquant" not in combined.casefold()
