@@ -1,3 +1,7 @@
+from copy import deepcopy
+
+import pytest
+
 from basketball_miner.distill_v3.ledger import DistillLedger
 from basketball_miner.distill_v3.materialize import StagingBlob, materialize_staging
 from basketball_miner.distill_v3.models import BatchRecord, CandidateStageState
@@ -152,6 +156,22 @@ def test_review_repeat_parks_without_immediate_requeue():
     assert candidate_id in result.ledger.review_candidate_ids
 
 
+def test_review_blocked_parks_without_immediate_requeue():
+    candidate_id = "CAND-1111111111111111"
+    batch = _batch("REVIEW", [candidate_id], ["1" * 64])
+    result = _result(
+        batch,
+        [{
+            "candidate_id": candidate_id,
+            "stage": "REVIEW",
+            "decision": "BLOCKED",
+            "reason_code": "SOURCE_UNAVAILABLE",
+        }],
+    )
+    assert result.next_batches == ()
+    assert candidate_id in result.ledger.parked_review_candidate_ids
+
+
 def test_shadow_audit_support_completes_without_next_queue():
     candidate_id = "CAND-1111111111111111"
     batch = _batch("AUDIT", [candidate_id], ["1" * 64])
@@ -170,3 +190,99 @@ def test_shadow_audit_support_completes_without_next_queue():
     assert result.next_batches == ()
     state = result.ledger.candidate_states[candidate_id]
     assert (state.stage, state.status) == ("AUDIT", "COMPLETE")
+
+
+def test_candidate_set_mismatch_is_atomic():
+    ids = ["CAND-1111111111111111", "CAND-2222222222222222"]
+    batch = _batch("TRIAGE", ids, ["1" * 64, "2" * 64])
+    ledger = _ledger(batch)
+    before = deepcopy(ledger.model_dump(mode="json"))
+    blob = _blob(
+        batch,
+        [{"candidate_id": ids[0], "stage": "TRIAGE", "decision": "DEEP_PENDING", "reason_code": "RELEVANT"}],
+    )
+    with pytest.raises(ValueError, match="candidate set"):
+        materialize_staging(
+            staging_blobs=[blob],
+            source_batches={batch.batch_id: batch},
+            existing_ledger=ledger,
+            run_date="2026-09-14",
+            created_at="2026-09-14T00:20:00Z",
+        )
+    assert ledger.model_dump(mode="json") == before
+
+
+def test_fingerprint_mismatch_is_atomic():
+    candidate_id = "CAND-1111111111111111"
+    batch = _batch("TRIAGE", [candidate_id], ["1" * 64])
+    ledger = _ledger(batch)
+    before = deepcopy(ledger.model_dump(mode="json"))
+    blob = _blob(
+        batch,
+        [{"candidate_id": candidate_id, "stage": "TRIAGE", "decision": "DEEP_PENDING", "reason_code": "RELEVANT"}],
+    )
+    blob.payload["input_fingerprints"] = ["9" * 64]
+    with pytest.raises(ValueError, match="fingerprints"):
+        materialize_staging(
+            staging_blobs=[blob],
+            source_batches={batch.batch_id: batch},
+            existing_ledger=ledger,
+            run_date="2026-09-14",
+            created_at="2026-09-14T00:20:00Z",
+        )
+    assert ledger.model_dump(mode="json") == before
+
+
+def test_malformed_record_blocks_whole_blob_without_mutating_input_ledger():
+    candidate_id = "CAND-1111111111111111"
+    batch = _batch("TRIAGE", [candidate_id], ["1" * 64])
+    ledger = _ledger(batch)
+    before = deepcopy(ledger.model_dump(mode="json"))
+    blob = _blob(batch, [{"candidate_id": "bad-id", "stage": "TRIAGE", "decision": "REJECT", "reason_code": "BAD"}])
+    with pytest.raises(ValueError, match="invalid staging record"):
+        materialize_staging(
+            staging_blobs=[blob],
+            source_batches={batch.batch_id: batch},
+            existing_ledger=ledger,
+            run_date="2026-09-14",
+            created_at="2026-09-14T00:20:00Z",
+        )
+    assert ledger.model_dump(mode="json") == before
+
+
+def test_processed_staging_sha_is_idempotently_skipped():
+    candidate_id = "CAND-1111111111111111"
+    batch = _batch("TRIAGE", [candidate_id], ["1" * 64])
+    ledger = _ledger(batch)
+    ledger.processed_staging_shas.add("a" * 40)
+    ledger.completed_batch_ids.add(batch.batch_id)
+    result = materialize_staging(
+        staging_blobs=[_blob(batch, [], sha_char="a")],
+        source_batches={batch.batch_id: batch},
+        existing_ledger=ledger,
+        run_date="2026-09-14",
+        created_at="2026-09-14T00:20:00Z",
+    )
+    assert result.next_batches == ()
+    assert result.processed_staging_shas == ()
+    assert result.completed_batch_ids == ()
+
+
+def test_completed_batch_rejects_different_unprocessed_staging_blob():
+    candidate_id = "CAND-1111111111111111"
+    batch = _batch("TRIAGE", [candidate_id], ["1" * 64])
+    ledger = _ledger(batch)
+    ledger.completed_batch_ids.add(batch.batch_id)
+    blob = _blob(
+        batch,
+        [{"candidate_id": candidate_id, "stage": "TRIAGE", "decision": "DEEP_PENDING", "reason_code": "RELEVANT"}],
+        sha_char="b",
+    )
+    with pytest.raises(ValueError, match="completed batch"):
+        materialize_staging(
+            staging_blobs=[blob],
+            source_batches={batch.batch_id: batch},
+            existing_ledger=ledger,
+            run_date="2026-09-14",
+            created_at="2026-09-14T00:20:00Z",
+        )
