@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .models import DailyAuditRecord
 
@@ -38,6 +38,13 @@ class DailyMetrics(BaseModel):
     canonical_accepts: int = Field(default=0, ge=0)
     canonical_without_judge: int = Field(default=0, ge=0)
     simultaneous_valid_lease_conflicts: int = Field(default=0, ge=0)
+
+    @field_validator("backlog_by_stage")
+    @classmethod
+    def validate_backlog_counts(cls, value: dict[str, int]) -> dict[str, int]:
+        if any(count < 0 for count in value.values()):
+            raise ValueError("backlog_by_stage counts must be nonnegative")
+        return value
 
 
 _INVARIANT_FIELDS = (
