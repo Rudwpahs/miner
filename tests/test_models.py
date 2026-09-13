@@ -1,4 +1,4 @@
-from basketball_miner.models import CandidateRecord, RunCounters, SourceRecord
+from basketball_miner.models import CandidateRecord, RunCounters
 
 
 def _candidate(**overrides) -> CandidateRecord:
