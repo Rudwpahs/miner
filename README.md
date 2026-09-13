@@ -16,9 +16,29 @@ The public repository contains collector code plus non-sensitive checkpoint stat
 
 The production workflow targets `Rudwpahs/hoopDB`, a separate private candidate-data repository. Do not disable the privacy preflight or broaden the export token beyond that approved target.
 
+The public workflows do not run self-hosted GPU jobs, CUDA workloads, FormQuant, QLoRA, or other private model-compute workloads. Those belong in a separately controlled private compute environment.
+
 ## Schedule and limits
 
 The production workflow is configured for `17 */3 * * *` UTC, or eight scheduled runs per day, with a hard 20,000-record inspection budget per run. This is 40× the prior 500-record ceiling while keeping the same schedule frequency, for a theoretical maximum of 160,000 inspected source records per day. GitHub scheduled jobs can start later than the nominal cron time, and actual exported candidate volume will be lower because duplicate and basketball-relevance filters remain active. The design targets no incremental paid API/cloud usage, but GitHub/API policies and quotas can change and are not guaranteed by this project.
+
+## Distillation V3 core dry-run
+
+The V3 core adds deterministic validation, exact deduplication, queue/lease contracts, historical knowledge indexing, immutable staging, Judge-gated promotion validation, and release metrics. Semantic decisions remain external to this deterministic core.
+
+Run the side-effect-free fixture pipeline with:
+
+```bash
+python scripts/run_distill_v3.py \
+  --inbox-jsonl tests/fixtures/v3/inbox.jsonl \
+  --state-dir _v3_state \
+  --batch-size 100 \
+  --dry-run
+```
+
+The core dry-run intentionally performs **no semantic ACCEPT decision, no canonical write, no private-repository write, and no GPU execution**. `--state-dir` is required to preserve the future storage interface, but the current `--dry-run` does not create or modify it. Persistent V3 storage/orchestration is a separate integration step and is rejected by this CLI until that layer is implemented.
+
+The V3 safety rules are structural: raw inbox data cannot be promoted directly; Triage cannot ACCEPT; a Deep `PROPOSE_ACCEPT` cannot become canonical knowledge without a Judge `CONFIRM`; immutable staging permits an identical retry but refuses changed-byte overwrites; and only the future Auditor integration may perform canonical promotion.
 
 ## Development
 
@@ -28,7 +48,7 @@ python -m pytest -q
 python -m ruff check src tests scripts
 ```
 
-A no-export run can be launched locally with:
+A no-export Miner collection run can be launched locally with:
 
 ```bash
 python scripts/run_miner.py --budget 50 --no-export
