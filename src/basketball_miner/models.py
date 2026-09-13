@@ -26,6 +26,10 @@ class CandidateRecord(SourceRecord):
     relevance_signals: list[str] = Field(default_factory=list, max_length=16)
     provenance: Provenance
     warnings: list[str] = Field(default_factory=list, max_length=16)
+    supersedes_candidate_id: str | None = Field(
+        default=None,
+        pattern=r"^CAND-[0-9a-f]{16}$",
+    )
     discovered_at: str
 
     @field_validator("url")
@@ -54,3 +58,9 @@ class RunCounters(BaseModel):
     exported: int = Field(default=0, ge=0)
     rate_limited: int = Field(default=0, ge=0)
     adapter_errors: int = Field(default=0, ge=0)
+    identity_verified: int = Field(default=0, ge=0)
+    identity_variants: int = Field(default=0, ge=0)
+    identity_ambiguous: int = Field(default=0, ge=0)
+    identity_mismatches: int = Field(default=0, ge=0)
+    identity_unverified: int = Field(default=0, ge=0)
+    identity_collisions: int = Field(default=0, ge=0)

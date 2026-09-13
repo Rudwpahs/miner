@@ -6,6 +6,7 @@ from typing import Protocol
 from basketball_miner.models import CandidateRecord, Checkpoint, RunCounters, SourceRecord
 from basketball_miner.normalize import canonicalize_url, fingerprint, stable_candidate_id
 from basketball_miner.relevance import classify_relevance
+from basketball_miner.source_identity import IdentityDecision, SourceIdentityResult
 from basketball_miner.sources.base import SourceAdapter
 
 
@@ -13,10 +14,17 @@ class CandidateSink(Protocol):
     def write_batch(self, batch_id: str, candidates: list[CandidateRecord]): ...
 
 
+class SourceIdentityVerifier(Protocol):
+    def verify(self, source: SourceRecord) -> SourceIdentityResult: ...
+
+
 def _candidate_from_source(
     source: SourceRecord,
     topic_codes: tuple[str, ...],
     signals: tuple[str, ...],
+    *,
+    warnings: tuple[str, ...] = (),
+    supersedes_candidate_id: str | None = None,
 ) -> CandidateRecord:
     candidate_id, canonical_hash = stable_candidate_id(source)
     return CandidateRecord(
@@ -27,9 +35,33 @@ def _candidate_from_source(
         topic_codes=list(topic_codes),
         relevance_signals=list(signals),
         provenance="LINKED",
-        warnings=[],
+        warnings=list(warnings),
+        supersedes_candidate_id=supersedes_candidate_id,
         discovered_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     )
+
+
+def _mark_identity_counter(decision: IdentityDecision, counters: dict[str, int]) -> None:
+    if decision is IdentityDecision.UNVERIFIED:
+        counters["unverified"] += 1
+        return
+    if decision is IdentityDecision.NOT_APPLICABLE:
+        return
+
+    counters["verified"] += 1
+    if decision is IdentityDecision.HIGH_CONFIDENCE_VARIANT:
+        counters["variants"] += 1
+    elif decision is IdentityDecision.AMBIGUOUS:
+        counters["ambiguous"] += 1
+    elif decision is IdentityDecision.MISMATCH:
+        counters["mismatches"] += 1
+
+
+def _add_collision_warning(candidate: CandidateRecord) -> bool:
+    if "DOI_IDENTITY_COLLISION" in candidate.warnings:
+        return False
+    candidate.warnings.append("DOI_IDENTITY_COLLISION")
+    return True
 
 
 def run_miner(
@@ -41,6 +73,7 @@ def run_miner(
     seen_hashes: set[str] | None = None,
     chunk_size: int = 50,
     run_id: str | None = None,
+    identity_verifier: SourceIdentityVerifier | None = None,
 ) -> RunCounters:
     if not 1 <= budget <= 500:
         raise ValueError("budget must be between 1 and 500")
@@ -59,6 +92,16 @@ def run_miner(
     exported = 0
     rate_limited = 0
     adapter_errors = 0
+    identity_counts = {
+        "verified": 0,
+        "variants": 0,
+        "ambiguous": 0,
+        "mismatches": 0,
+        "unverified": 0,
+        "collisions": 0,
+    }
+    identity_signature_dois: dict[str, set[str]] = {}
+    identity_candidates: dict[str, list[CandidateRecord]] = {}
     active = list(adapters)
     sequence = 0
 
@@ -79,6 +122,48 @@ def run_miner(
             pending_hashes: set[str] = set()
             for source in batch.records[:request_limit]:
                 inspected += 1
+
+                if source.adapter == "crossref" and identity_verifier is not None:
+                    preliminary = classify_relevance(source)
+                    if not preliminary.relevant:
+                        continue
+                    relevance_passed += 1
+
+                    identity = identity_verifier.verify(source)
+                    _mark_identity_counter(identity.decision, identity_counts)
+                    final_source = identity.canonical_source or source
+                    final_relevance = classify_relevance(final_source)
+                    if not final_relevance.relevant:
+                        continue
+
+                    digest = fingerprint(final_source)
+                    known_dois = identity_signature_dois.get(digest, set())
+                    if digest in seen_store and not known_dois:
+                        duplicates += 1
+                        continue
+                    if final_source.stable_id in known_dois:
+                        duplicates += 1
+                        continue
+
+                    candidate = _candidate_from_source(
+                        final_source,
+                        final_relevance.topic_codes,
+                        final_relevance.signals,
+                        warnings=identity.warnings,
+                    )
+                    if known_dois and final_source.stable_id not in known_dois:
+                        for previous in identity_candidates.get(digest, []):
+                            if _add_collision_warning(previous):
+                                identity_counts["collisions"] += 1
+                        if _add_collision_warning(candidate):
+                            identity_counts["collisions"] += 1
+
+                    identity_signature_dois.setdefault(digest, set()).add(final_source.stable_id)
+                    identity_candidates.setdefault(digest, []).append(candidate)
+                    pending_hashes.add(digest)
+                    candidates.append(candidate)
+                    continue
+
                 digest = fingerprint(source)
                 if digest in seen_store or digest in pending_hashes:
                     duplicates += 1
@@ -114,4 +199,10 @@ def run_miner(
         exported=exported,
         rate_limited=rate_limited,
         adapter_errors=adapter_errors,
+        identity_verified=identity_counts["verified"],
+        identity_variants=identity_counts["variants"],
+        identity_ambiguous=identity_counts["ambiguous"],
+        identity_mismatches=identity_counts["mismatches"],
+        identity_unverified=identity_counts["unverified"],
+        identity_collisions=identity_counts["collisions"],
     )

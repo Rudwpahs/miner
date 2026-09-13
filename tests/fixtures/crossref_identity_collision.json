@@ -1,0 +1,18 @@
+{
+  "records": [
+    {
+      "stable_id": "10.1000/supplement-a",
+      "url": "https://doi.org/10.1000/supplement-a",
+      "title": "Basketball Passing Biomechanics",
+      "authors": ["Same Author"],
+      "published_at": "2026-01-01"
+    },
+    {
+      "stable_id": "10.1000/supplement-b",
+      "url": "https://doi.org/10.1000/supplement-b",
+      "title": "Basketball Passing Biomechanics",
+      "authors": ["Same Author"],
+      "published_at": "2026-01-01"
+    }
+  ]
+}

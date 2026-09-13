@@ -9,6 +9,7 @@ from pathlib import Path
 from basketball_miner.export import GitHubPrivateRepoSink, ensure_private_repo
 from basketball_miner.models import CandidateRecord, Checkpoint
 from basketball_miner.run import run_miner
+from basketball_miner.source_identity import CrossrefIdentityVerifier
 from basketball_miner.sources.crossref import CrossrefAdapter
 from basketball_miner.sources.youtube_rss import YouTubeRssAdapter, load_channel_ids
 from basketball_miner.state import load_checkpoint, save_checkpoint
@@ -58,6 +59,12 @@ def _safe_summary(counters, *, export_enabled: bool) -> str:
             "would_export": counters.exported if not export_enabled else 0,
             "rate_limited": counters.rate_limited,
             "adapter_errors": counters.adapter_errors,
+            "identity_verified": counters.identity_verified,
+            "identity_variants": counters.identity_variants,
+            "identity_ambiguous": counters.identity_ambiguous,
+            "identity_mismatches": counters.identity_mismatches,
+            "identity_unverified": counters.identity_unverified,
+            "identity_collisions": counters.identity_collisions,
         },
         sort_keys=True,
     )
@@ -84,6 +91,7 @@ def main() -> int:
         CrossrefAdapter(),
         YouTubeRssAdapter(load_channel_ids(args.youtube_config)),
     ]
+    identity_verifier = CrossrefIdentityVerifier()
 
     if args.no_export:
         counters = run_miner(
@@ -92,6 +100,7 @@ def main() -> int:
             budget=args.budget,
             checkpoints=checkpoints,
             seen_hashes=seen_hashes,
+            identity_verifier=identity_verifier,
         )
         print(_safe_summary(counters, export_enabled=False))
         return 0
@@ -117,6 +126,7 @@ def main() -> int:
         budget=args.budget,
         checkpoints=checkpoints,
         seen_hashes=seen_hashes,
+        identity_verifier=identity_verifier,
     )
     _save_state(args.next_state_dir, checkpoints, seen_hashes)
     print(_safe_summary(counters, export_enabled=True))
