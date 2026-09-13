@@ -35,6 +35,7 @@ def test_timeout_exhaustion_is_unverified_and_does_not_raise():
     assert calls == 3
     assert result.decision is IdentityDecision.UNVERIFIED
     assert result.warnings == ("DOI_IDENTITY_UNVERIFIED",)
+    assert result.reason_code == "DOI_TIMEOUT"
 
 
 def test_not_found_is_unverified_and_does_not_raise():
@@ -48,6 +49,7 @@ def test_not_found_is_unverified_and_does_not_raise():
     result = verifier.verify(_source())
 
     assert result.decision is IdentityDecision.UNVERIFIED
+    assert result.reason_code == "DOI_NOT_FOUND"
 
 
 def test_malformed_exact_response_is_unverified():
@@ -63,3 +65,4 @@ def test_malformed_exact_response_is_unverified():
     result = verifier.verify(_source())
 
     assert result.decision is IdentityDecision.UNVERIFIED
+    assert result.reason_code == "DOI_MALFORMED_RESPONSE"
