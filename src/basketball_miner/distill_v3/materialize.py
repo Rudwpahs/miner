@@ -100,6 +100,7 @@ def _destination(stage: Stage, decision: str) -> Stage | None:
         ("JUDGE", "REJECT"): None,
         ("REVIEW", "PROPOSE_ACCEPT"): "JUDGE",
         ("REVIEW", "REVIEW"): None,
+        ("REVIEW", "BLOCKED"): None,
         ("REVIEW", "REJECT"): None,
         ("AUDIT", "CREATE"): None,
         ("AUDIT", "SUPPORT"): None,
