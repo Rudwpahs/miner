@@ -20,7 +20,9 @@ def load_jsonl(name: str) -> list[dict]:
 
 
 def test_claim_signature_is_case_order_and_noise_stable():
-    assert claim_signature("Target, VISIBILITY and target control!") == "control target visibility"
+    assert claim_signature("Target, VISIBILITY and target control!") == (
+        "and control target visibility"
+    )
 
 
 def test_build_index_does_not_mutate_v2_rows():
