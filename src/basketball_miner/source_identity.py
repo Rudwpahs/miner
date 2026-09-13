@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import re
 import time
 import unicodedata
 from dataclasses import dataclass
@@ -11,6 +12,8 @@ from urllib.parse import quote
 import httpx
 
 from basketball_miner.models import SourceRecord
+
+_TAG_RE = re.compile(r"<[^>]+>")
 
 
 class IdentityDecision(str, Enum):
@@ -41,6 +44,7 @@ class SourceIdentityResult:
     canonical_source: SourceRecord | None
     warnings: tuple[str, ...] = ()
     title_result: TitleIdentityResult | None = None
+    reason_code: str | None = None
 
 
 def normalize_title(value: str) -> str:
@@ -72,6 +76,14 @@ def compare_titles(observed: str, canonical: str) -> TitleIdentityResult:
     else:
         decision = IdentityDecision.AMBIGUOUS
     return TitleIdentityResult(decision, sequence_ratio, containment, length_ratio)
+
+
+def _clean_abstract(value: object) -> str | None:
+    if value is None:
+        return None
+    text = _TAG_RE.sub(" ", str(value))
+    cleaned = " ".join(html.unescape(text).split())
+    return cleaned or None
 
 
 def _source_from_message(message: object) -> SourceRecord:
@@ -113,7 +125,7 @@ def _source_from_message(message: object) -> SourceRecord:
         title=title,
         authors=authors,
         published_at=published_at,
-        summary=None,
+        summary=_clean_abstract(message.get("abstract")),
     )
 
 
@@ -152,23 +164,30 @@ class CrossrefIdentityVerifier:
                 if attempt < 2:
                     self.sleep_fn(0)
                     continue
-                return self._unverified()
-            if response.status_code in {404, 429}:
-                return self._unverified()
+                return self._unverified("DOI_TIMEOUT")
+            except httpx.RequestError:
+                if attempt < 2:
+                    self.sleep_fn(0)
+                    continue
+                return self._unverified("DOI_NETWORK_ERROR")
+            if response.status_code == 429:
+                return self._unverified("DOI_RATE_LIMITED")
+            if response.status_code == 404:
+                return self._unverified("DOI_NOT_FOUND")
             if response.status_code >= 500:
                 if attempt < 2:
                     self.sleep_fn(0)
                     continue
-                return self._unverified()
+                return self._unverified("DOI_SERVER_ERROR")
             if response.status_code >= 400:
-                return self._unverified()
+                return self._unverified("DOI_HTTP_ERROR")
             break
 
         try:
             payload = response.json() if response is not None else {}
             canonical = _source_from_message(payload.get("message"))
         except (TypeError, ValueError):
-            return self._unverified()
+            return self._unverified("DOI_MALFORMED_RESPONSE")
 
         title_result = compare_titles(source.title, canonical.title)
         decision = title_result.decision
@@ -203,9 +222,10 @@ class CrossrefIdentityVerifier:
         return SourceIdentityResult(decision, canonical, warnings, title_result)
 
     @staticmethod
-    def _unverified() -> SourceIdentityResult:
+    def _unverified(reason_code: str) -> SourceIdentityResult:
         return SourceIdentityResult(
             IdentityDecision.UNVERIFIED,
             None,
             ("DOI_IDENTITY_UNVERIFIED",),
+            reason_code=reason_code,
         )
