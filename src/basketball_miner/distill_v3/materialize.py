@@ -46,11 +46,11 @@ class StageMaterialization:
 def _parse_records(stage: Stage, payload: dict[str, object]) -> list[SemanticResult | ShadowAuditResult]:
     raw_records = payload.get("records")
     if not isinstance(raw_records, list):
-        raise ValueError("staging records must be a list")
+        raise TypeError("staging records must be a list")
     parsed: list[SemanticResult | ShadowAuditResult] = []
     for row in raw_records:
         if not isinstance(row, dict):
-            raise ValueError("staging records must contain objects")
+            raise TypeError("staging records must contain objects")
         try:
             parsed.append(
                 ShadowAuditResult.model_validate(row)
