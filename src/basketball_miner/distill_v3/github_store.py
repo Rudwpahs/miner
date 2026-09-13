@@ -82,7 +82,7 @@ class GitHubV3Store:
         except ValueError as exc:
             raise RuntimeError("private directory read returned invalid metadata") from exc
         if not isinstance(payload, list):
-            raise RuntimeError("private directory read did not return a directory")
+            raise TypeError("private directory read did not return a directory")
 
         entries: list[RemoteEntry] = []
         for item in payload:
