@@ -1,7 +1,13 @@
 import pytest
 from pydantic import ValidationError
 
-from basketball_miner.distill_v3.models import AuditPromotion, BatchRecord, SemanticResult
+from basketball_miner.distill_v3.models import (
+    AuditPromotion,
+    BatchRecord,
+    CandidateStageState,
+    SemanticResult,
+    ShadowAuditResult,
+)
 
 
 def test_triage_cannot_confirm():
@@ -88,3 +94,61 @@ def test_audit_promotion_rejects_nonconfirm():
             concept_action="CREATE",
             canonical_date="2026-09-14",
         )
+
+
+def test_candidate_state_source_type_is_optional_for_backward_compatibility():
+    legacy = CandidateStageState(
+        candidate_id="CAND-1111111111111111",
+        source_fingerprint="1" * 64,
+        stage="TRIAGE",
+        status="PENDING",
+        updated_at="2026-09-14T00:00:00Z",
+    )
+    assert legacy.source_type is None
+
+
+def test_shadow_audit_result_accepts_concept_action_decision():
+    result = ShadowAuditResult(
+        candidate_id="CAND-1111111111111111",
+        stage="AUDIT",
+        decision="SUPPORT",
+        reason_code="SUPPORTED_EXISTING_CONCEPT",
+        knowledge_unit_id="KU-1",
+        concept_id="CONCEPT-111111111111",
+        concept_action="SUPPORT",
+    )
+    assert result.stage == "AUDIT"
+    assert result.decision == "SUPPORT"
+
+
+def test_shadow_audit_result_rejects_non_audit_decision():
+    with pytest.raises(ValidationError):
+        ShadowAuditResult(
+            candidate_id="CAND-1111111111111111",
+            stage="AUDIT",
+            decision="CONFIRM",
+            reason_code="ILLEGAL",
+        )
+
+
+def test_shadow_audit_result_requires_matching_concept_metadata_for_concept_action():
+    with pytest.raises(ValidationError):
+        ShadowAuditResult(
+            candidate_id="CAND-1111111111111111",
+            stage="AUDIT",
+            decision="REFINE",
+            reason_code="MISSING_METADATA",
+            knowledge_unit_id="KU-1",
+            concept_id="CONCEPT-111111111111",
+            concept_action="SUPPORT",
+        )
+
+
+def test_shadow_audit_review_may_omit_concept_metadata():
+    result = ShadowAuditResult(
+        candidate_id="CAND-1111111111111111",
+        stage="AUDIT",
+        decision="REVIEW",
+        reason_code="NEEDS_MORE_EVIDENCE",
+    )
+    assert result.concept_id is None
