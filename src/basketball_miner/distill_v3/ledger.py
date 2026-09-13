@@ -17,6 +17,9 @@ class DistillLedger(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     processed_blob_shas: set[str] = Field(default_factory=set)
+    processed_staging_shas: set[str] = Field(default_factory=set)
+    completed_batch_ids: set[str] = Field(default_factory=set)
+    parked_review_candidate_ids: set[str] = Field(default_factory=set)
     terminal_candidate_ids: set[str] = Field(default_factory=set)
     review_candidate_ids: set[str] = Field(default_factory=set)
     normalized_source_keys: set[str] = Field(default_factory=set)
@@ -42,6 +45,7 @@ class DistillLedger(BaseModel):
         self.candidate_states[candidate.candidate_id] = CandidateStageState(
             candidate_id=candidate.candidate_id,
             source_fingerprint=candidate.canonical_hash,
+            source_type=candidate.source_type,
             stage="TRIAGE",
             status=status,
             batch_id=None,
@@ -105,6 +109,9 @@ def seed_from_v2_history(
 def ledger_payload(ledger: DistillLedger) -> dict[str, object]:
     return {
         "processed_blob_shas": sorted(ledger.processed_blob_shas),
+        "processed_staging_shas": sorted(ledger.processed_staging_shas),
+        "completed_batch_ids": sorted(ledger.completed_batch_ids),
+        "parked_review_candidate_ids": sorted(ledger.parked_review_candidate_ids),
         "terminal_candidate_ids": sorted(ledger.terminal_candidate_ids),
         "review_candidate_ids": sorted(ledger.review_candidate_ids),
         "normalized_source_keys": sorted(ledger.normalized_source_keys),
