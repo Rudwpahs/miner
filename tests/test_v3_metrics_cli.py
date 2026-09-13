@@ -127,6 +127,7 @@ def test_v3_cli_refuses_persistent_mode(tmp_path: Path):
             "--state-dir",
             str(tmp_path / "state"),
         ],
+        check=False,
         capture_output=True,
         text=True,
     )
