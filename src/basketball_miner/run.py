@@ -6,7 +6,11 @@ from typing import Protocol
 from basketball_miner.models import CandidateRecord, Checkpoint, RunCounters, SourceRecord
 from basketball_miner.normalize import canonicalize_url, fingerprint, stable_candidate_id
 from basketball_miner.relevance import classify_relevance
-from basketball_miner.source_identity import IdentityDecision, SourceIdentityResult
+from basketball_miner.source_identity import (
+    IdentityDecision,
+    SourceIdentityResult,
+    normalize_title,
+)
 from basketball_miner.sources.base import SourceAdapter
 
 
@@ -62,6 +66,14 @@ def _add_collision_warning(candidate: CandidateRecord) -> bool:
         return False
     candidate.warnings.append("DOI_IDENTITY_COLLISION")
     return True
+
+
+def _identity_signature(source: SourceRecord) -> str:
+    authors = "|".join(normalize_title(author) for author in source.authors)
+    year = ""
+    if source.published_at and source.published_at[:4].isdigit():
+        year = source.published_at[:4]
+    return f"{normalize_title(source.title)}\n{authors}\n{year}"
 
 
 def run_miner(
@@ -137,7 +149,8 @@ def run_miner(
                         continue
 
                     digest = fingerprint(final_source)
-                    known_dois = identity_signature_dois.get(digest, set())
+                    signature = _identity_signature(final_source)
+                    known_dois = identity_signature_dois.get(signature, set())
                     if digest in seen_store and not known_dois:
                         duplicates += 1
                         continue
@@ -152,14 +165,16 @@ def run_miner(
                         warnings=identity.warnings,
                     )
                     if known_dois and final_source.stable_id not in known_dois:
-                        for previous in identity_candidates.get(digest, []):
+                        for previous in identity_candidates.get(signature, []):
                             if _add_collision_warning(previous):
                                 identity_counts["collisions"] += 1
                         if _add_collision_warning(candidate):
                             identity_counts["collisions"] += 1
 
-                    identity_signature_dois.setdefault(digest, set()).add(final_source.stable_id)
-                    identity_candidates.setdefault(digest, []).append(candidate)
+                    identity_signature_dois.setdefault(signature, set()).add(
+                        final_source.stable_id
+                    )
+                    identity_candidates.setdefault(signature, []).append(candidate)
                     pending_hashes.add(digest)
                     candidates.append(candidate)
                     continue

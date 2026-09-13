@@ -38,6 +38,28 @@ def test_timeout_exhaustion_is_unverified_and_does_not_raise():
     assert result.reason_code == "DOI_TIMEOUT"
 
 
+def test_server_retry_uses_existing_crossref_backoff_schedule():
+    calls = 0
+    sleeps: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503)
+
+    verifier = CrossrefIdentityVerifier(
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        sleep_fn=sleeps.append,
+    )
+
+    result = verifier.verify(_source())
+
+    assert calls == 3
+    assert sleeps == [1, 2]
+    assert result.decision is IdentityDecision.UNVERIFIED
+    assert result.reason_code == "DOI_SERVER_ERROR"
+
+
 def test_not_found_is_unverified_and_does_not_raise():
     verifier = CrossrefIdentityVerifier(
         client=httpx.Client(
