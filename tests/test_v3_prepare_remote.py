@@ -181,10 +181,16 @@ def test_remote_dry_run_has_no_puts_and_reports_shadow_summary():
 def test_write_shadow_persists_only_v3_paths_and_uses_observed_shas():
     candidate = _candidate()
     inbox = "ml/coach/miner-data/inbox/2026/09/14/one.jsonl"
+    accepted = "ml/coach/miner-data/distilled/accepted/2026/09/13.jsonl"
     old_ledger = json.dumps(ledger_payload(DistillLedger()), sort_keys=True) + "\n"
     store = MemoryStore(
         files={
             inbox: _remote(inbox, _inbox_jsonl(candidate), "a"),
+            accepted: _remote(
+                accepted,
+                '{"knowledge_unit_id":"KU-A","claim":"Accepted shooting claim"}\n',
+                "f",
+            ),
             ledger_path(): _remote(ledger_path(), old_ledger, "b"),
             concept_index_path(): _remote(concept_index_path(), "", "c"),
             metrics_path("2026-09-14"): _remote(metrics_path("2026-09-14"), "{}\n", "d"),
