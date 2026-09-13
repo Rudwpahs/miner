@@ -38,12 +38,23 @@ class DailyMetrics(BaseModel):
     canonical_accepts: int = Field(default=0, ge=0)
     canonical_without_judge: int = Field(default=0, ge=0)
     simultaneous_valid_lease_conflicts: int = Field(default=0, ge=0)
+    staging_files_seen: int = Field(default=0, ge=0)
+    staging_files_materialized: int = Field(default=0, ge=0)
+    staging_files_invalid: int = Field(default=0, ge=0)
+    batches_completed: int = Field(default=0, ge=0)
+    candidates_advanced: int = Field(default=0, ge=0)
+    terminalized_candidates: int = Field(default=0, ge=0)
+    parked_review_candidates: int = Field(default=0, ge=0)
+    next_batches_created_by_stage: dict[str, int] = Field(default_factory=dict)
+    illegal_stage_transition: int = Field(default=0, ge=0)
+    staging_candidate_set_mismatch: int = Field(default=0, ge=0)
+    staging_fingerprint_mismatch: int = Field(default=0, ge=0)
 
-    @field_validator("backlog_by_stage")
+    @field_validator("backlog_by_stage", "next_batches_created_by_stage")
     @classmethod
-    def validate_backlog_counts(cls, value: dict[str, int]) -> dict[str, int]:
+    def validate_nonnegative_counts(cls, value: dict[str, int]) -> dict[str, int]:
         if any(count < 0 for count in value.values()):
-            raise ValueError("backlog_by_stage counts must be nonnegative")
+            raise ValueError("stage counts must be nonnegative")
         return value
 
 
@@ -53,6 +64,9 @@ _INVARIANT_FIELDS = (
     "canonical_without_judge",
     "simultaneous_valid_lease_conflicts",
     "audit_duplicate_leakage",
+    "illegal_stage_transition",
+    "staging_candidate_set_mismatch",
+    "staging_fingerprint_mismatch",
 )
 
 
