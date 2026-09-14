@@ -1,0 +1,1 @@
+{"schema_version":"coach-projection-v1","knowledge_unit_id":"KU-SHOOT-DISTANCE-MILLER-1996-001","domain_codes":["SHOOTING","BIOMECHANICS"],"metric_codes":["JOINT_ANGLE"],"policy_codes":["DO_NOT_OVERINFER","REQUIRE_CONTEXT"],"effect_code":"ASSOCIATION","evidence_code":"B+","projection_reason":"direct distance-dependent kinematics evidence","approved":true}
