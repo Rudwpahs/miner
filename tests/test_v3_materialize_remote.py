@@ -155,7 +155,7 @@ def test_remote_materialization_writes_next_queue_before_observed_sha_state():
 
 
 def test_different_byte_next_queue_collision_aborts_before_any_write():
-    store, batch = _fixture()
+    store, _batch = _fixture()
     dry = run_remote_materialization(
         store=store,
         run_date="2026-09-14",
