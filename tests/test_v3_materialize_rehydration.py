@@ -9,6 +9,7 @@ import pytest
 from basketball_miner.distill_v3.github_store import RemoteEntry, RemoteFile
 from basketball_miner.distill_v3.ledger import DistillLedger, ledger_payload
 from basketball_miner.distill_v3.materialize import run_remote_materialization
+from basketball_miner.distill_v3.metrics import DailyMetrics, check_release_invariants
 from basketball_miner.distill_v3.models import BatchRecord, CandidateStageState
 from basketball_miner.distill_v3.paths import ledger_path, queue_path
 
@@ -170,3 +171,11 @@ def test_missing_authoritative_source_type_fails_before_any_write():
         )
 
     assert store.writes == []
+
+
+def test_source_type_rehydration_failure_after_write_is_release_invariant():
+    metrics = DailyMetrics(
+        date="2026-09-14",
+        source_type_rehydration_failure_after_write=1,
+    )
+    assert "source_type_rehydration_failure_after_write" in check_release_invariants(metrics)
