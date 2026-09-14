@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from basketball_miner.distill_v3.coach_bridge import stable_research_unit_id
 
 
