@@ -25,7 +25,7 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
                 continue
             value = json.loads(stripped)
             if not isinstance(value, dict):
-                raise ValueError(f"{path}:{line_number}: JSONL record must be an object")
+                raise TypeError(f"{path}:{line_number}: JSONL record must be an object")
             records.append(value)
     return records
 
@@ -54,7 +54,14 @@ def main() -> int:
         projections = [CoachProjectionV1.model_validate(record) for record in projection_records]
         bundle = build_linked_bundle(canonical_records, projections)
         write_linked_bundle(bundle, args.output)
-    except (OSError, json.JSONDecodeError, ValidationError, BridgeExportError, ValueError) as exc:
+    except (
+        OSError,
+        json.JSONDecodeError,
+        ValidationError,
+        BridgeExportError,
+        TypeError,
+        ValueError,
+    ) as exc:
         print(f"coach bridge export failed: {type(exc).__name__}", file=sys.stderr)
         return 2
 
