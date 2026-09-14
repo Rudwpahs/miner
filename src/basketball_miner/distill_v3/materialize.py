@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from pydantic import ValidationError
+
+from basketball_miner.models import CandidateRecord
 
 from .github_store import GitHubV3Store
 from .ledger import DistillLedger, ledger_payload
@@ -364,6 +366,54 @@ def _load_remote_ledger(store: GitHubV3Store) -> tuple[DistillLedger, str | None
     return ledger, remote.sha
 
 
+def _rehydrate_legacy_source_types(
+    *,
+    store: GitHubV3Store,
+    ledger: DistillLedger,
+    source_batches: dict[str, BatchRecord],
+) -> int:
+    expected_fingerprints: dict[str, str] = {}
+    for batch in source_batches.values():
+        for candidate_id, fingerprint in zip(
+            batch.candidate_ids,
+            batch.input_fingerprints,
+            strict=True,
+        ):
+            state = ledger.candidate_states.get(candidate_id)
+            if state is None or state.source_type is not None:
+                continue
+            existing = expected_fingerprints.get(candidate_id)
+            if existing is not None and existing != fingerprint:
+                raise ValueError("legacy candidate has conflicting source fingerprints")
+            expected_fingerprints[candidate_id] = fingerprint
+
+    if not expected_fingerprints:
+        return 0
+
+    from .prepare import load_inbox_blobs
+
+    recovered: dict[str, str] = {}
+    for blob in load_inbox_blobs(store):
+        for row in blob.candidates:
+            candidate_id = row.candidate_id if isinstance(row, CandidateRecord) else row.get("candidate_id")
+            if not isinstance(candidate_id, str) or candidate_id not in expected_fingerprints:
+                continue
+            try:
+                candidate = row if isinstance(row, CandidateRecord) else CandidateRecord.model_validate(row)
+            except (ValidationError, TypeError, ValueError) as exc:
+                raise ValueError("authoritative source record is invalid") from exc
+            if candidate.canonical_hash != expected_fingerprints[candidate_id]:
+                raise ValueError("authoritative source fingerprint does not match candidate state")
+            existing_source_type = recovered.get(candidate_id)
+            if existing_source_type is not None and existing_source_type != candidate.source_type:
+                raise ValueError("authoritative source type conflicts for candidate")
+            recovered[candidate_id] = candidate.source_type
+
+    for candidate_id in sorted(recovered):
+        ledger.candidate_states[candidate_id].source_type = recovered[candidate_id]
+    return len(recovered)
+
+
 def _preflight_next_queues(
     store: GitHubV3Store,
     next_batches: tuple[BatchRecord, ...],
@@ -391,6 +441,11 @@ def _compute_remote_materialization(
     staging_blobs = discover_staging_blobs(store)
     source_batches = load_source_batches(store, staging_blobs)
     existing_ledger, ledger_sha = _load_remote_ledger(store)
+    rehydrations = _rehydrate_legacy_source_types(
+        store=store,
+        ledger=existing_ledger,
+        source_batches=source_batches,
+    )
     materialization = materialize_staging(
         staging_blobs=staging_blobs,
         source_batches=source_batches,
@@ -398,6 +453,13 @@ def _compute_remote_materialization(
         run_date=run_date,
         created_at=created_at,
     )
+    if rehydrations:
+        materialization = replace(
+            materialization,
+            metrics=materialization.metrics.model_copy(
+                update={"legacy_source_type_rehydrations": rehydrations}
+            ),
+        )
     invariant_failures = tuple(check_release_invariants(materialization.metrics))
     if invariant_failures:
         raise RuntimeError(f"hard invariant failure: {','.join(invariant_failures)}")
@@ -424,6 +486,7 @@ def _materialization_summary(
         "staging_files_materialized": materialization.metrics.staging_files_materialized,
         "batches_completed": materialization.metrics.batches_completed,
         "candidates_advanced": materialization.metrics.candidates_advanced,
+        "legacy_source_type_rehydrations": materialization.metrics.legacy_source_type_rehydrations,
         "next_batches_created_by_stage": dict(
             sorted(materialization.metrics.next_batches_created_by_stage.items())
         ),
