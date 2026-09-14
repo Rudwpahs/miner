@@ -83,6 +83,7 @@ def run_miner(
     *,
     checkpoints: dict[str, Checkpoint] | None = None,
     seen_hashes: set[str] | None = None,
+    seen_crossref_dois: set[str] | None = None,
     chunk_size: int = 50,
     run_id: str | None = None,
     identity_verifier: SourceIdentityVerifier | None = None,
@@ -95,6 +96,7 @@ def run_miner(
     resolved_run_id = run_id or datetime.now(UTC).strftime("RUN-%Y%m%dT%H%M%S%fZ")
     checkpoint_store = checkpoints if checkpoints is not None else {}
     seen_store = seen_hashes if seen_hashes is not None else set()
+    crossref_doi_store = seen_crossref_dois if seen_crossref_dois is not None else set()
     for adapter in adapters:
         checkpoint_store.setdefault(adapter.name, Checkpoint(adapter=adapter.name))
 
@@ -132,6 +134,7 @@ def run_miner(
 
             candidates: list[CandidateRecord] = []
             pending_hashes: set[str] = set()
+            pending_crossref_dois: set[str] = set()
             for source in batch.records[:request_limit]:
                 inspected += 1
 
@@ -148,15 +151,14 @@ def run_miner(
                     if not final_relevance.relevant:
                         continue
 
+                    doi = final_source.stable_id.casefold().strip()
+                    if doi in crossref_doi_store or doi in pending_crossref_dois:
+                        duplicates += 1
+                        continue
+
                     digest = fingerprint(final_source)
                     signature = _identity_signature(final_source)
                     known_dois = identity_signature_dois.get(signature, set())
-                    if digest in seen_store and not known_dois:
-                        duplicates += 1
-                        continue
-                    if final_source.stable_id in known_dois:
-                        duplicates += 1
-                        continue
 
                     candidate = _candidate_from_source(
                         final_source,
@@ -176,6 +178,7 @@ def run_miner(
                     )
                     identity_candidates.setdefault(signature, []).append(candidate)
                     pending_hashes.add(digest)
+                    pending_crossref_dois.add(doi)
                     candidates.append(candidate)
                     continue
 
@@ -200,6 +203,7 @@ def run_miner(
                 exported += len(candidates)
 
             seen_store.update(pending_hashes)
+            crossref_doi_store.update(pending_crossref_dois)
             checkpoint_store[adapter.name] = batch.next_checkpoint
 
             if not batch.rate_limited and len(batch.records) >= request_limit:
