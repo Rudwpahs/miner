@@ -5,6 +5,7 @@ ROOT = Path(__file__).parents[1]
 TEST_WORKFLOW = ROOT / ".github" / "workflows" / "test.yml"
 MINE_WORKFLOW = ROOT / ".github" / "workflows" / "mine.yml"
 DISTILL_V3_WORKFLOW = ROOT / ".github" / "workflows" / "distill_v3_prepare.yml"
+DISTILL_V3_SCRIPT = ROOT / "scripts" / "run_distill_v3_prepare.py"
 
 
 def _workflow_text(path: Path) -> str:
@@ -74,6 +75,14 @@ def test_v3_shadow_workflow_is_cpu_only_and_targets_private_shadow_repo():
     assert "--dry-run" in text
     assert "--write-shadow" in text
     assert "HOOPHUB_MINER_TOKEN" in text
+
+
+def test_v3_shadow_workflow_uses_combined_materialize_then_prepare_cycle():
+    workflow = _workflow_text(DISTILL_V3_WORKFLOW)
+    script = _workflow_text(DISTILL_V3_SCRIPT)
+    assert workflow.count("scripts/run_distill_v3_prepare.py") == 2
+    assert "run_remote_v3_cycle" in script
+    assert "run_remote_shadow" not in script
 
 
 def test_v3_shadow_workflow_checks_out_main_without_persisted_credentials():
