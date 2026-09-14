@@ -65,7 +65,7 @@ def test_build_linked_bundle_exports_only_explicit_linked_matches() -> None:
     assert unit.source_ids == [bundle.sources[0].source_id]
     assert bundle.sources[0].url == "https://doi.org/10.1080/026404196367895"
     assert bundle.skipped == {
-        "projection_missing": 1,
+        "provenance_not_linked": 1,
     }
 
 
