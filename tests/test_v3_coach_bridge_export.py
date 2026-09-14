@@ -80,6 +80,49 @@ def test_missing_projection_and_unlinked_records_never_become_row_only_output() 
     assert bundle.skipped == {"projection_missing": 1, "provenance_not_linked": 1}
 
 
+def test_missing_source_fields_are_skipped_not_promoted_or_fatal() -> None:
+    missing_url_id = "KU-SOURCE-MISSING-URL-001"
+    missing_title_id = "KU-SOURCE-MISSING-TITLE-001"
+    missing_url = {**_canonical(missing_url_id), "source_url": ""}
+    missing_title = {**_canonical(missing_title_id), "source_title": ""}
+
+    bundle = build_linked_bundle(
+        [missing_url, missing_title],
+        [_projection(missing_url_id), _projection(missing_title_id)],
+    )
+
+    assert bundle.units == []
+    assert bundle.sources == []
+    assert bundle.skipped == {"source_missing": 2}
+
+
+def test_optional_identifier_and_doi_variants_normalize_to_canonical_source() -> None:
+    first_id = "KU-DOI-NORMALIZE-FIRST-001"
+    second_id = "KU-DOI-NORMALIZE-SECOND-001"
+    first = {
+        **_canonical(first_id),
+        "source_identifier": "",
+        "source_url": "HTTP://doi.org/10.1080/026404196367895",
+    }
+    second = {
+        **_canonical(second_id),
+        "source_identifier": "DOI:10.1080/026404196367895",
+        "source_url": "https://doi.org/10.1080/026404196367895",
+    }
+
+    bundle = build_linked_bundle(
+        [first, second],
+        [_projection(first_id), _projection(second_id)],
+    )
+
+    assert len(bundle.units) == 2
+    assert len(bundle.sources) == 1
+    source = bundle.sources[0]
+    assert source.source_identifier == "10.1080/026404196367895"
+    assert source.url == "https://doi.org/10.1080/026404196367895"
+    assert bundle.units[0].source_ids == bundle.units[1].source_ids == [source.source_id]
+
+
 def test_conflicting_duplicate_ku_and_numeric_collision_fail_closed() -> None:
     first = _canonical()
     conflicting = {**first, "claim": "A conflicting duplicate claim."}
