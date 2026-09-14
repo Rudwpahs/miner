@@ -51,10 +51,43 @@ def test_orchestrator_prompt_contains_exact_stage_decision_contracts():
     assert "TRIAGE: REJECT | DUPLICATE | DEEP_PENDING" in text
     assert "DEEP: PROPOSE_ACCEPT | REVIEW | REJECT" in text
     assert "JUDGE: CONFIRM | REVIEW | REJECT" in text
-    assert "REVIEW: PROPOSE_ACCEPT | REVIEW | REJECT" in text
+    assert "REVIEW: PROPOSE_ACCEPT | REVIEW | REJECT | BLOCKED" in text
 
 
 def test_orchestrator_prompt_never_allows_raw_to_training_bypass():
     text = _prompt_text()
     assert "Raw candidates must never be used directly as training data" in text
     assert "raw-to-training bypass is forbidden" in text
+
+
+def test_orchestrator_prompt_defines_exact_materializer_owned_batch_eligibility():
+    text = _prompt_text()
+    assert "batch.status == PENDING" in text
+    assert "batch_id not in ledger.completed_batch_ids" in text
+    assert "no active lease exists for batch_id" in text
+    assert "Stage Materializer" in text
+    assert "sole next-queue owner" in text
+    assert "must never create next-stage queue files" in text
+    assert "must never mutate the ledger" in text
+
+
+def test_orchestrator_prompt_materializes_existing_staging_before_claiming_new_work():
+    text = _prompt_text()
+    assert "materialize existing staging before claiming semantic work" in text
+    assert "Do not perform materialization yourself" in text
+
+
+def test_orchestrator_prompt_requires_atomic_staging_envelope():
+    text = _prompt_text()
+    assert "staging envelope" in text
+    for field in (
+        "run_id",
+        "batch_id",
+        "stage",
+        "worker",
+        "created_at",
+        "input_fingerprints",
+        "records",
+    ):
+        assert f"`{field}`" in text
+    assert "every candidate in the source batch must appear exactly once" in text
