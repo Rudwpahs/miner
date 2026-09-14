@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
+import basketball_miner.distill_v3.materialize as materialize_module
 from basketball_miner.distill_v3.github_store import RemoteEntry, RemoteFile
 from basketball_miner.distill_v3.ledger import DistillLedger, ledger_payload
 from basketball_miner.distill_v3.materialize import run_remote_materialization
@@ -214,3 +215,36 @@ def test_stale_ledger_sha_fails_closed():
             created_at="2026-09-14T00:20:00Z",
             write_shadow=True,
         )
+
+
+def test_malformed_staging_aborts_before_any_write():
+    store, _batch = _fixture()
+    staging_path = next(path for path in store.files if "/staging/" in path)
+    store.files[staging_path] = _remote(staging_path, b"{not-json}\n", "f")
+
+    with pytest.raises(RuntimeError, match="invalid JSON"):
+        run_remote_materialization(
+            store=store,
+            run_date="2026-09-14",
+            created_at="2026-09-14T00:20:00Z",
+            write_shadow=True,
+        )
+    assert store.writes == []
+
+
+def test_invariant_failure_aborts_before_any_write(monkeypatch: pytest.MonkeyPatch):
+    store, _batch = _fixture()
+    monkeypatch.setattr(
+        materialize_module,
+        "check_release_invariants",
+        lambda _metrics: ["illegal_stage_transition"],
+    )
+
+    with pytest.raises(RuntimeError, match="illegal_stage_transition"):
+        run_remote_materialization(
+            store=store,
+            run_date="2026-09-14",
+            created_at="2026-09-14T00:20:00Z",
+            write_shadow=True,
+        )
+    assert store.writes == []
