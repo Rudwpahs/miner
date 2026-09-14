@@ -145,6 +145,9 @@ class LinkedCoachBundleV1(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal["coach-linked-bundle-v1"] = "coach-linked-bundle-v1"
+    canonical_input_count: int
+    projection_input_count: int
+    collision_count: int = 0
     units: list[LinkedCoachUnitV1]
     sources: list[LinkedSourceV1]
     skipped: dict[str, int]
@@ -154,8 +157,20 @@ class LinkedCoachManifestV1(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal["coach-linked-manifest-v1"] = "coach-linked-manifest-v1"
-    unit_count: int
+    exporter_version: Literal["coach-provenance-bridge-v1"] = "coach-provenance-bridge-v1"
+    id_derivation_version: Literal["coach-linked-v1"] = "coach-linked-v1"
+    codebook_version: Literal["coach-bridge-codes-v1"] = "coach-bridge-codes-v1"
+    canonical_input_count: int
+    projection_input_count: int
+    exported_unit_count: int
     source_count: int
+    linked_count: int
+    skipped: dict[str, int]
+    collision_count: int
+    unit_ordering: Literal["research_unit_id,knowledge_unit_id"] = (
+        "research_unit_id,knowledge_unit_id"
+    )
+    source_ordering: Literal["source_id"] = "source_id"
     units_sha256: str
     sources_sha256: str
 
@@ -334,7 +349,13 @@ def build_linked_bundle(
 
     units.sort(key=lambda unit: (unit.research_unit_id, unit.knowledge_unit_id))
     sources = sorted(sources_by_id.values(), key=lambda source: source.source_id)
-    return LinkedCoachBundleV1(units=units, sources=sources, skipped=dict(sorted(skipped.items())))
+    return LinkedCoachBundleV1(
+        canonical_input_count=len(records),
+        projection_input_count=len(projections),
+        units=units,
+        sources=sources,
+        skipped=dict(sorted(skipped.items())),
+    )
 
 
 def _jsonl_bytes(models: list[BaseModel]) -> bytes:
@@ -352,31 +373,58 @@ def _jsonl_bytes(models: list[BaseModel]) -> bytes:
     return ("\n".join(lines) + "\n").encode()
 
 
-def write_linked_bundle(
-    bundle: LinkedCoachBundleV1,
-    output_dir: Path,
-) -> LinkedCoachManifestV1:
-    """Write deterministic JSONL bundle files and a hash-bound manifest."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    units_bytes = _jsonl_bytes(bundle.units)
-    sources_bytes = _jsonl_bytes(bundle.sources)
-    (output_dir / "units.jsonl").write_bytes(units_bytes)
-    (output_dir / "sources.jsonl").write_bytes(sources_bytes)
-
-    manifest = LinkedCoachManifestV1(
-        unit_count=len(bundle.units),
-        source_count=len(bundle.sources),
-        units_sha256=hashlib.sha256(units_bytes).hexdigest(),
-        sources_sha256=hashlib.sha256(sources_bytes).hexdigest(),
-    )
-    manifest_bytes = (
+def _canonical_json_bytes(model: BaseModel) -> bytes:
+    return (
         json.dumps(
-            manifest.model_dump(mode="json"),
+            model.model_dump(mode="json"),
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
         )
         + "\n"
     ).encode()
-    (output_dir / "manifest.json").write_bytes(manifest_bytes)
+
+
+def _atomic_write_files(output_dir: Path, files: dict[str, bytes]) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    temporary: dict[str, Path] = {}
+    try:
+        for name, payload in files.items():
+            temp_path = output_dir / f".{name}.tmp"
+            temp_path.write_bytes(payload)
+            temporary[name] = temp_path
+        for name in files:
+            temporary[name].replace(output_dir / name)
+    finally:
+        for temp_path in temporary.values():
+            temp_path.unlink(missing_ok=True)
+
+
+def write_linked_bundle(
+    bundle: LinkedCoachBundleV1,
+    output_dir: Path,
+) -> LinkedCoachManifestV1:
+    """Write deterministic JSONL bundle files and a hash-bound manifest."""
+    units_bytes = _jsonl_bytes(bundle.units)
+    sources_bytes = _jsonl_bytes(bundle.sources)
+    manifest = LinkedCoachManifestV1(
+        canonical_input_count=bundle.canonical_input_count,
+        projection_input_count=bundle.projection_input_count,
+        exported_unit_count=len(bundle.units),
+        source_count=len(bundle.sources),
+        linked_count=len(bundle.units),
+        skipped=bundle.skipped,
+        collision_count=bundle.collision_count,
+        units_sha256=hashlib.sha256(units_bytes).hexdigest(),
+        sources_sha256=hashlib.sha256(sources_bytes).hexdigest(),
+    )
+    manifest_bytes = _canonical_json_bytes(manifest)
+    _atomic_write_files(
+        output_dir,
+        {
+            "units.jsonl": units_bytes,
+            "sources.jsonl": sources_bytes,
+            "manifest.json": manifest_bytes,
+        },
+    )
     return manifest
