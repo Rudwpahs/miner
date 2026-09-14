@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 import httpx
 
 from basketball_miner.distill_v3.github_store import GitHubV3Store
-from basketball_miner.distill_v3.prepare import run_remote_shadow
+from basketball_miner.distill_v3.prepare import run_remote_v3_cycle
 from basketball_miner.export import ensure_private_repo
 
 
@@ -37,7 +37,7 @@ def main() -> int:
     with httpx.Client(timeout=15.0, follow_redirects=False) as client:
         ensure_private_repo(args.repo, token, client=client)
         store = GitHubV3Store(args.repo, args.branch, token, client=client)
-        summary = run_remote_shadow(
+        summary = run_remote_v3_cycle(
             store=store,
             run_date=args.run_date,
             created_at=created_at,
