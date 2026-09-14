@@ -1,7 +1,7 @@
 # Distillation V3 Stage Materializer Design
 
 Date: 2026-09-14
-Status: Approved architecture, awaiting user spec review
+Status: Approved architecture and implementation contract
 Branch: `work/distillation-v3`
 Parent specs:
 - `docs/superpowers/specs/2026-09-14-distillation-v3-design.md`
@@ -174,15 +174,16 @@ Any failure rejects the entire staging blob from advancement. No partial state o
 
 Existing `SemanticResult` remains authoritative for TRIAGE, DEEP, JUDGE, and REVIEW.
 
-The existing REVIEW contract is retained exactly:
+The REVIEW contract is:
 
 ```text
 PROPOSE_ACCEPT
 REVIEW
+BLOCKED
 REJECT
 ```
 
-There is **no new REVIEW `BLOCKED` decision** in this phase. When evidence is inaccessible, REVIEW is used with a `reason_code` that states the blocking prerequisite, and the candidate is parked.
+`REVIEW` and `BLOCKED` both park the candidate without immediate requeue. `BLOCKED` is used when a prerequisite such as authoritative source access is unavailable; neither decision is terminal rejection.
 
 ### New shadow AUDIT result model
 
@@ -245,6 +246,7 @@ REJECT  -> terminal
 PROPOSE_ACCEPT -> JUDGE queue
 REJECT         -> terminal
 REVIEW         -> park as ACTIVE_REVIEW; no immediate requeue
+BLOCKED        -> park as ACTIVE_REVIEW; no immediate requeue
 ```
 
 A parked REVIEW record keeps its `reason_code`/blocking prerequisite in the staging evidence. Automatic reactivation is outside initial materializer scope.
@@ -324,7 +326,7 @@ DEEP PROPOSE_ACCEPT:
 JUDGE CONFIRM:
   JUDGE/COMPLETE -> AUDIT/PENDING
 
-REVIEW REVIEW:
+REVIEW REVIEW/BLOCKED:
   REVIEW/COMPLETE + parked_review_candidate_ids
 
 REJECT/DUPLICATE:
@@ -418,7 +420,7 @@ Release invariants:
 4. Triage cannot create ACCEPT/JUDGE/AUDIT directly;
 5. Deep cannot canonicalize;
 6. Judge CONFIRM creates AUDIT work only in SHADOW MODE;
-7. repeated REVIEW is parked instead of infinitely requeued;
+7. repeated REVIEW/BLOCKED is parked instead of infinitely requeued;
 8. immutable queue collisions fail closed;
 9. mutable ledger/metrics are optimistic-SHA only;
 10. canonical V2 paths remain untouched;
@@ -481,6 +483,7 @@ illegal_stage_transition
 staging_candidate_set_mismatch
 staging_fingerprint_mismatch
 legacy_source_type_rehydrations
+source_type_rehydration_failure_after_write
 ```
 
 Existing `DailyMetrics` release invariants remain authoritative.
@@ -498,7 +501,7 @@ Required tests:
 5. JUDGE `CONFIRM` -> AUDIT, never canonical.
 6. JUDGE `REVIEW` -> REVIEW.
 7. REVIEW `PROPOSE_ACCEPT` -> JUDGE.
-8. REVIEW `REVIEW` -> parked/no immediate requeue.
+8. REVIEW `REVIEW|BLOCKED` -> parked/no immediate requeue.
 9. AUDIT `CREATE|SUPPORT|REFINE|CONTRADICT` -> shadow complete only.
 10. AUDIT `REVIEW|BLOCKED` -> parked.
 11. exact candidate-set validation.
@@ -527,6 +530,7 @@ Create:
 ```text
 src/basketball_miner/distill_v3/materialize.py
 tests/test_v3_materialize.py
+tests/test_v3_materialize_rehydration.py
 ```
 
 Modify:
