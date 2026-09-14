@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 
 from pydantic import ValidationError
 
-from .ledger import DistillLedger
-from .metrics import DailyMetrics
+from .github_store import GitHubV3Store
+from .ledger import DistillLedger, ledger_payload
+from .metrics import DailyMetrics, check_release_invariants
 from .models import BatchRecord, SemanticResult, ShadowAuditResult, Stage
+from .paths import V3_ROOT, ledger_path, metrics_path, queue_path
 from .queue import build_batches, priority_for
 
 _STAGING_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -262,3 +265,179 @@ def materialize_staging(
         completed_batch_ids=tuple(sorted(completed)),
         metrics=metrics,
     )
+
+
+def _json_bytes(value: object) -> bytes:
+    return (
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+
+
+def _read_required(store: GitHubV3Store, path: str):
+    remote = store.read_file(path)
+    if remote is None:
+        raise RuntimeError(f"remote file disappeared during materialization: {path}")
+    return remote
+
+
+def _parse_staging_payload(content: bytes, *, path: str) -> dict[str, object]:
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError(f"remote staging is not UTF-8: {path}") from exc
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise RuntimeError(f"remote staging must contain exactly one envelope line: {path}")
+    try:
+        payload = json.loads(lines[0])
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"remote staging contains invalid JSON: {path}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"remote staging envelope must be an object: {path}")
+    return payload
+
+
+def discover_staging_blobs(store: GitHubV3Store) -> list[StagingBlob]:
+    from .prepare import discover_remote_files
+
+    paths = discover_remote_files(
+        store,
+        f"{V3_ROOT}/staging",
+        suffixes=(".jsonl",),
+    )
+    blobs: list[StagingBlob] = []
+    for path in paths:
+        remote = _read_required(store, path)
+        blobs.append(
+            StagingBlob(
+                path=path,
+                sha=remote.sha,
+                payload=_parse_staging_payload(remote.content, path=path),
+            )
+        )
+    return blobs
+
+
+def load_source_batches(
+    store: GitHubV3Store,
+    staging_blobs: list[StagingBlob],
+) -> dict[str, BatchRecord]:
+    batches: dict[str, BatchRecord] = {}
+    for blob in sorted(staging_blobs, key=lambda item: (item.path, item.sha)):
+        batch_id = blob.payload.get("batch_id")
+        stage = blob.payload.get("stage")
+        if not isinstance(batch_id, str) or not isinstance(stage, str):
+            raise ValueError("staging batch_id and stage must be strings")
+        path = queue_path(stage, batch_id)
+        remote = _read_required(store, path)
+        try:
+            payload = json.loads(remote.content.decode("utf-8"))
+            batch = BatchRecord.model_validate(payload)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValidationError) as exc:
+            raise RuntimeError(f"source queue is invalid: {path}") from exc
+        existing = batches.get(batch.batch_id)
+        if existing is not None and existing != batch:
+            raise RuntimeError(f"source batch changed during materialization: {batch.batch_id}")
+        batches[batch.batch_id] = batch
+    return batches
+
+
+def _load_remote_ledger(store: GitHubV3Store) -> tuple[DistillLedger, str | None]:
+    remote = store.read_file(ledger_path())
+    if remote is None:
+        return DistillLedger(), None
+    try:
+        payload = json.loads(remote.content.decode("utf-8"))
+        ledger = DistillLedger.model_validate(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValidationError) as exc:
+        raise RuntimeError("existing V3 ledger is invalid") from exc
+    return ledger, remote.sha
+
+
+def _preflight_next_queues(
+    store: GitHubV3Store,
+    next_batches: tuple[BatchRecord, ...],
+) -> tuple[dict[str, bytes], list[str]]:
+    payloads: dict[str, bytes] = {}
+    missing: list[str] = []
+    for batch in next_batches:
+        path = queue_path(batch.stage, batch.batch_id)
+        content = _json_bytes(batch.model_dump(mode="json"))
+        payloads[path] = content
+        current = store.read_file(path)
+        if current is None:
+            missing.append(path)
+        elif current.content != content:
+            raise FileExistsError(f"immutable V3 path already exists with different bytes: {path}")
+    return dict(sorted(payloads.items())), sorted(missing)
+
+
+def run_remote_materialization(
+    *,
+    store: GitHubV3Store,
+    run_date: str,
+    created_at: str,
+    write_shadow: bool,
+) -> dict[str, object]:
+    staging_blobs = discover_staging_blobs(store)
+    source_batches = load_source_batches(store, staging_blobs)
+    existing_ledger, ledger_sha = _load_remote_ledger(store)
+    materialization = materialize_staging(
+        staging_blobs=staging_blobs,
+        source_batches=source_batches,
+        existing_ledger=existing_ledger,
+        run_date=run_date,
+        created_at=created_at,
+    )
+    invariant_failures = check_release_invariants(materialization.metrics)
+    if invariant_failures:
+        raise RuntimeError(f"hard invariant failure: {','.join(invariant_failures)}")
+
+    next_payloads, missing_paths = _preflight_next_queues(store, materialization.next_batches)
+    metrics_remote = store.read_file(metrics_path(run_date))
+
+    summary: dict[str, object] = {
+        "staging_files_seen": materialization.metrics.staging_files_seen,
+        "staging_files_materialized": materialization.metrics.staging_files_materialized,
+        "batches_completed": materialization.metrics.batches_completed,
+        "candidates_advanced": materialization.metrics.candidates_advanced,
+        "next_batches_created_by_stage": dict(
+            sorted(materialization.metrics.next_batches_created_by_stage.items())
+        ),
+        "next_batch_ids": [batch.batch_id for batch in materialization.next_batches],
+        "next_batch_payloads": {
+            path: content.decode("utf-8") for path, content in next_payloads.items()
+        },
+        "processed_staging_shas": list(materialization.processed_staging_shas),
+        "completed_batch_ids": list(materialization.completed_batch_ids),
+        "invariant_failures": invariant_failures,
+        "write_enabled": write_shadow,
+    }
+    if not write_shadow:
+        return summary
+
+    latest_ledger = store.read_file(ledger_path())
+    latest_sha = latest_ledger.sha if latest_ledger is not None else None
+    if latest_sha != ledger_sha:
+        raise RuntimeError("stale remote SHA")
+
+    for path in missing_paths:
+        store.create_immutable(
+            path,
+            next_payloads[path],
+            f"distill-v3: stage {path.rsplit('/', 1)[-1].removesuffix('.json')}",
+        )
+
+    store.update_mutable(
+        metrics_path(run_date),
+        _json_bytes(materialization.metrics.model_dump(mode="json")),
+        expected_sha=metrics_remote.sha if metrics_remote is not None else None,
+        message=f"distill-v3: update materializer metrics {run_date}",
+    )
+    store.update_mutable(
+        ledger_path(),
+        _json_bytes(ledger_payload(materialization.ledger)),
+        expected_sha=ledger_sha,
+        message="distill-v3: materialize shadow staging",
+    )
+    return summary
