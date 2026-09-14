@@ -90,7 +90,7 @@ When a concept relationship is supportable, use only `CREATE`, `SUPPORT`, `REFIN
 
 ### REVIEW
 
-Review Resolver is the highest normal priority. It tries to complete missing evidence, resolve ambiguous source mapping, reconcile uncertainty, or clarify conflicts without weakening the B-policy. It may output `PROPOSE_ACCEPT`, `REVIEW`, `REJECT`, or `BLOCKED`. Use `BLOCKED` only when the required prerequisite cannot currently be obtained; otherwise unresolved but potentially recoverable semantic uncertainty remains `REVIEW`. Never invent evidence to clear the queue.
+Review Resolver is the highest normal priority. It tries to complete missing evidence, resolve ambiguous source mapping, reconcile uncertainty, or clarify conflicts without weakening the B-policy. It may output `PROPOSE_ACCEPT`, `REVIEW`, `REJECT`, or `BLOCKED`. Use `BLOCKED` only when the required prerequisite cannot currently be obtained; otherwise unresolved but potentially recoverable semantic uncertainty remains `REVIEW`; never invent evidence to clear the queue.
 
 ### AUDIT
 
@@ -100,7 +100,7 @@ Audit checks the staged outcomes for the required day for duplicate leakage, con
 
 Keep the existing B-policy unchanged. Peer-reviewed or official evidence outranks coaching assertions. Coaching videos and interviews can supply useful expert evidence but do not automatically receive high-trust ACCEPT status. Preserve meaningful conflicting evidence rather than forcing consensus.
 
-Never claim to have verified a source that was not actually accessible during the run. If source content required for the current decision cannot be accessed, use `REVIEW` or `BLOCKED` as appropriate. Never invent a source, quotation, result, candidate, knowledge unit, quantitative value, DOI, or prior decision.
+Never claim to have verified a source that was not actually accessible during the run. If source content required for the current decision cannot be accessed, use `REVIEW` or `BLOCKED` as appropriate; never invent a source, quotation, result, candidate, knowledge unit, quantitative value, DOI, or prior decision.
 
 ## Retrieval rule
 
