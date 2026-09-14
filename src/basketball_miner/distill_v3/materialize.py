@@ -293,7 +293,7 @@ def _parse_staging_payload(content: bytes, *, path: str) -> dict[str, object]:
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"remote staging contains invalid JSON: {path}") from exc
     if not isinstance(payload, dict):
-        raise RuntimeError(f"remote staging envelope must be an object: {path}")
+        raise TypeError(f"remote staging envelope must be an object: {path}")
     return payload
 
 
@@ -327,7 +327,7 @@ def load_source_batches(
         batch_id = blob.payload.get("batch_id")
         stage = blob.payload.get("stage")
         if not isinstance(batch_id, str) or not isinstance(stage, str):
-            raise ValueError("staging batch_id and stage must be strings")
+            raise TypeError("staging batch_id and stage must be strings")
         path = queue_path(stage, batch_id)
         remote = _read_required(store, path)
         try:
