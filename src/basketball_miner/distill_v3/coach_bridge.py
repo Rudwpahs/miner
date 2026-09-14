@@ -9,105 +9,40 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 LINKED_ID_BASE = 1_000_000_000_000
+DEFAULT_CODEBOOK_PATH = Path(__file__).resolve().parents[3] / "config" / "coach_bridge_v1_codes.json"
 
-_ALLOWED_DOMAINS = frozenset(
-    {
-        "BIOMECHANICS",
-        "COACHING_METHOD",
-        "DECELERATION_COD",
-        "DECISION",
-        "DEFENSE",
-        "FATIGUE",
-        "FINISHING",
-        "FOOTWORK",
-        "HANDLE",
-        "MOTOR_LEARNING",
-        "PERCEPTION_GAZE",
-        "PNR_TACTICS",
-        "POSE_VALIDATION",
-        "RELEASE_BALLISTICS",
-        "SHOOTING",
-        "SPACING_OFFBALL",
-        "TRAINING_LOAD",
-        "YOUTH",
-        "UNCLASSIFIED",
-    }
-)
-_ALLOWED_METRICS = frozenset(
-    {
-        "ACCELERATION",
-        "ANGULAR_VELOCITY",
-        "ASYMMETRY",
-        "BACKSPIN",
-        "COM_DISPLACEMENT",
-        "DECELERATION",
-        "DECISION_ACCURACY",
-        "DEFENDER_DISTANCE",
-        "ENTRY_ANGLE",
-        "FIXATION_COUNT",
-        "FIXATION_DURATION",
-        "GRF_FORCE",
-        "HEART_RATE",
-        "JOINT_ANGLE",
-        "JOINT_MOMENT_POWER",
-        "JUMP_HEIGHT",
-        "MOVEMENT_SPEED",
-        "POSE_ERROR",
-        "REACTION_TIME",
-        "RELEASE_ANGLE",
-        "RELEASE_HEIGHT",
-        "RELEASE_TIMING",
-        "RELEASE_VELOCITY",
-        "SHOT_ACCURACY",
-        "SHOT_CLOCK",
-        "VARIABILITY",
-        "UNMAPPED_METRIC",
-    }
-)
-_ALLOWED_POLICIES = frozenset(
-    {
-        "CONFIDENCE_GATE",
-        "DO_NOT_INFER_UNOBSERVABLE",
-        "DO_NOT_OVERINFER",
-        "HYPOTHESIS_ONLY",
-        "PREFER_LONGITUDINAL",
-        "PRESERVE_CONTRADICTION",
-        "PROGRESSION",
-        "REQUIRE_CONTEXT",
-        "SEPARATE_DIMENSIONS",
-        "USE_PERSONAL_BASELINE",
-        "GENERAL_GUIDANCE",
-    }
-)
-_ALLOWED_EFFECTS = frozenset(
-    {
-        "NO_SIGNIFICANT_DIFFERENCE",
-        "INCREASE",
-        "DECREASE",
-        "ASSOCIATION",
-        "DIFFERENCE",
-        "OFFICIAL_GUIDANCE",
-        "UNSPECIFIED",
-    }
-)
-_ALLOWED_EVIDENCE = frozenset(
-    {
-        "A",
-        "A-",
-        "A+",
-        "B",
-        "B-",
-        "B+",
-        "C",
-        "C-",
-        "C+",
-        "D",
-        "D-",
-        "D+",
-        "E",
-        "U",
-    }
-)
+
+class CoachBridgeCodebookV1(BaseModel):
+    """Frozen controlled vocabulary used by Coach Provenance Bridge V1."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal["coach-bridge-codes-v1"]
+    domains: list[str] = Field(min_length=1)
+    metrics: list[str] = Field(min_length=1)
+    policies: list[str] = Field(min_length=1)
+    effects: list[str] = Field(min_length=1)
+    evidence: list[str] = Field(min_length=1)
+
+    @field_validator("domains", "metrics", "policies", "effects", "evidence")
+    @classmethod
+    def reject_duplicates(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("codebook entries must be unique")
+        return values
+
+
+def load_codebook(path: Path = DEFAULT_CODEBOOK_PATH) -> CoachBridgeCodebookV1:
+    """Load the frozen bridge codebook from disk."""
+    return CoachBridgeCodebookV1.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+_CODEBOOK = load_codebook()
+_ALLOWED_DOMAINS = frozenset(_CODEBOOK.domains)
+_ALLOWED_METRICS = frozenset(_CODEBOOK.metrics)
+_ALLOWED_POLICIES = frozenset(_CODEBOOK.policies)
+_ALLOWED_EFFECTS = frozenset(_CODEBOOK.effects)
+_ALLOWED_EVIDENCE = frozenset(_CODEBOOK.evidence)
 
 
 class BridgeExportError(ValueError):
@@ -364,7 +299,12 @@ def build_linked_bundle(
 
 def _jsonl_bytes(models: list[BaseModel]) -> bytes:
     lines = [
-        json.dumps(model.model_dump(mode="json"), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        json.dumps(
+            model.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         for model in models
     ]
     if not lines:
