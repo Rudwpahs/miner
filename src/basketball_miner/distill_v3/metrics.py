@@ -49,6 +49,8 @@ class DailyMetrics(BaseModel):
     illegal_stage_transition: int = Field(default=0, ge=0)
     staging_candidate_set_mismatch: int = Field(default=0, ge=0)
     staging_fingerprint_mismatch: int = Field(default=0, ge=0)
+    legacy_source_type_rehydrations: int = Field(default=0, ge=0)
+    source_type_rehydration_failure_after_write: int = Field(default=0, ge=0)
 
     @field_validator("backlog_by_stage", "next_batches_created_by_stage")
     @classmethod
@@ -67,6 +69,7 @@ _INVARIANT_FIELDS = (
     "illegal_stage_transition",
     "staging_candidate_set_mismatch",
     "staging_fingerprint_mismatch",
+    "source_type_rehydration_failure_after_write",
 )
 
 
