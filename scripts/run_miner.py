@@ -29,22 +29,27 @@ def _load_seen(path: Path) -> set[str]:
     return {line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()}
 
 
+def _save_lines(path: Path, values: set[str]) -> None:
+    path.write_text(
+        "".join(f"{value}\n" for value in sorted(values)),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def _save_state(
     directory: Path,
     checkpoints: dict[str, Checkpoint],
     seen_hashes: set[str],
+    seen_crossref_dois: set[str],
 ) -> None:
     if directory.exists():
         shutil.rmtree(directory)
     directory.mkdir(parents=True)
     for adapter, checkpoint in sorted(checkpoints.items()):
         save_checkpoint(directory / f"{adapter}.json", checkpoint)
-    seen_path = directory / "seen_hashes.jsonl"
-    seen_path.write_text(
-        "".join(f"{digest}\n" for digest in sorted(seen_hashes)),
-        encoding="utf-8",
-        newline="\n",
-    )
+    _save_lines(directory / "seen_hashes.jsonl", seen_hashes)
+    _save_lines(directory / "seen_crossref_dois.jsonl", seen_crossref_dois)
 
 
 def _safe_summary(counters, *, export_enabled: bool) -> str:
@@ -87,6 +92,7 @@ def main() -> int:
         "youtube_rss": load_checkpoint(args.state_dir / "youtube_rss.json", "youtube_rss"),
     }
     seen_hashes = _load_seen(args.state_dir / "seen_hashes.jsonl")
+    seen_crossref_dois = _load_seen(args.state_dir / "seen_crossref_dois.jsonl")
     adapters = [
         CrossrefAdapter(),
         YouTubeRssAdapter(load_channel_ids(args.youtube_config)),
@@ -100,6 +106,7 @@ def main() -> int:
             budget=args.budget,
             checkpoints=checkpoints,
             seen_hashes=seen_hashes,
+            seen_crossref_dois=seen_crossref_dois,
             identity_verifier=identity_verifier,
         )
         print(_safe_summary(counters, export_enabled=False))
@@ -126,9 +133,10 @@ def main() -> int:
         budget=args.budget,
         checkpoints=checkpoints,
         seen_hashes=seen_hashes,
+        seen_crossref_dois=seen_crossref_dois,
         identity_verifier=identity_verifier,
     )
-    _save_state(args.next_state_dir, checkpoints, seen_hashes)
+    _save_state(args.next_state_dir, checkpoints, seen_hashes, seen_crossref_dois)
     print(_safe_summary(counters, export_enabled=True))
     return 0
 
