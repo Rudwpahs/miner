@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .ids import normalize_doi
+
 LINKED_ID_BASE = 1_000_000_000_000
 DEFAULT_CODEBOOK_PATH = Path(__file__).resolve().parents[3] / "config" / "coach_bridge_v1_codes.json"
 
@@ -165,10 +167,57 @@ def _required_text(record: dict[str, Any], field_name: str, knowledge_unit_id: s
     return value.strip()
 
 
-def _source_id(source_identifier: str, url: str) -> str:
-    identity = source_identifier.strip().casefold() or url.strip().casefold()
-    digest = hashlib.sha256(f"coach-linked-source-v1:{identity}".encode()).hexdigest()
-    return f"SRC-{digest[:16]}"
+def _optional_text(record: dict[str, Any], field_name: str) -> str:
+    value = record.get(field_name)
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise BridgeExportError(f"invalid {field_name}")
+    return value.strip()
+
+
+def _normalize_source(
+    record: dict[str, Any],
+    provenance: dict[str, Any],
+    knowledge_unit_id: str,
+) -> LinkedSourceV1 | None:
+    source_url_raw = record.get("source_url")
+    source_title_raw = record.get("source_title")
+    if not isinstance(source_url_raw, str) or not source_url_raw.strip():
+        return None
+    if not isinstance(source_title_raw, str) or not source_title_raw.strip():
+        return None
+
+    adapter = provenance.get("adapter")
+    if not isinstance(adapter, str) or not adapter.strip():
+        raise BridgeExportError(f"{knowledge_unit_id}: missing provenance adapter")
+    adapter = adapter.strip()
+
+    source_identifier = _optional_text(record, "source_identifier")
+    source_url = source_url_raw.strip()
+    source_title = source_title_raw.strip()
+
+    doi = normalize_doi(source_identifier) if source_identifier else None
+    if doi is None:
+        doi = normalize_doi(source_url)
+    if doi is not None:
+        source_identifier = doi
+        source_url = f"https://doi.org/{doi}"
+
+    identity = "\n".join(
+        (
+            adapter.casefold(),
+            source_identifier.casefold() if source_identifier else source_url.casefold(),
+        )
+    )
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    return LinkedSourceV1(
+        source_id=f"SRC-LINKED-{digest[:12].upper()}",
+        source_identifier=source_identifier,
+        title=source_title,
+        url=source_url,
+        adapter=adapter,
+    )
 
 
 def _canonical_index(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -227,6 +276,11 @@ def build_linked_bundle(
             skip("projection_missing")
             continue
 
+        source = _normalize_source(record, provenance, knowledge_unit_id)
+        if source is None:
+            skip("source_missing")
+            continue
+
         research_unit_id = id_func(knowledge_unit_id)
         previous_ku = numeric_ids.get(research_unit_id)
         if previous_ku is not None and previous_ku != knowledge_unit_id:
@@ -236,24 +290,10 @@ def build_linked_bundle(
             )
         numeric_ids[research_unit_id] = knowledge_unit_id
 
-        source_identifier = _required_text(record, "source_identifier", knowledge_unit_id)
-        source_url = _required_text(record, "source_url", knowledge_unit_id)
-        source_title = _required_text(record, "source_title", knowledge_unit_id)
-        adapter = provenance.get("adapter")
-        if not isinstance(adapter, str) or not adapter.strip():
-            raise BridgeExportError(f"{knowledge_unit_id}: missing provenance adapter")
-        source_id = _source_id(source_identifier, source_url)
-        source = LinkedSourceV1(
-            source_id=source_id,
-            source_identifier=source_identifier,
-            title=source_title,
-            url=source_url,
-            adapter=adapter.strip(),
-        )
-        existing_source = sources_by_id.get(source_id)
+        existing_source = sources_by_id.get(source.source_id)
         if existing_source is not None and existing_source != source:
-            raise BridgeExportError(f"conflicting source identity: {source_id}")
-        sources_by_id[source_id] = source
+            raise BridgeExportError(f"conflicting source identity: {source.source_id}")
+        sources_by_id[source.source_id] = source
 
         safe_inference = record.get("safe_inference")
         if not isinstance(safe_inference, dict):
@@ -281,7 +321,7 @@ def build_linked_bundle(
                 policy_codes=projection.policy_codes,
                 effect_code=projection.effect_code,
                 evidence_code=projection.evidence_code,
-                source_ids=[source_id],
+                source_ids=[source.source_id],
                 confidence=float(confidence),
                 limitation=_required_text(
                     record, "contradiction_or_limitation", knowledge_unit_id
