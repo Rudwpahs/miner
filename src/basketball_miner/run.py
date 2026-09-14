@@ -13,6 +13,8 @@ from basketball_miner.source_identity import (
 )
 from basketball_miner.sources.base import SourceAdapter
 
+MAX_BUDGET = 20_000
+
 
 class CandidateSink(Protocol):
     def write_batch(self, batch_id: str, candidates: list[CandidateRecord]): ...
@@ -88,8 +90,8 @@ def run_miner(
     run_id: str | None = None,
     identity_verifier: SourceIdentityVerifier | None = None,
 ) -> RunCounters:
-    if not 1 <= budget <= 500:
-        raise ValueError("budget must be between 1 and 500")
+    if not 1 <= budget <= MAX_BUDGET:
+        raise ValueError(f"budget must be between 1 and {MAX_BUDGET}")
     if chunk_size < 1:
         raise ValueError("chunk_size must be >= 1")
 

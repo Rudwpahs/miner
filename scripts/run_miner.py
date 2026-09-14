@@ -8,7 +8,7 @@ from pathlib import Path
 
 from basketball_miner.export import GitHubPrivateRepoSink, ensure_private_repo
 from basketball_miner.models import CandidateRecord, Checkpoint
-from basketball_miner.run import run_miner
+from basketball_miner.run import MAX_BUDGET, run_miner
 from basketball_miner.source_identity import CrossrefIdentityVerifier
 from basketball_miner.sources.crossref import CrossrefAdapter
 from basketball_miner.sources.youtube_rss import YouTubeRssAdapter, load_channel_ids
@@ -77,15 +77,15 @@ def _safe_summary(counters, *, export_enabled: bool) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the Basketball Knowledge Miner")
-    parser.add_argument("--budget", type=int, default=500)
+    parser.add_argument("--budget", type=int, default=MAX_BUDGET)
     parser.add_argument("--state-dir", type=Path, default=Path("_state_current"))
     parser.add_argument("--next-state-dir", type=Path, default=Path("_state_next"))
     parser.add_argument("--youtube-config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--no-export", action="store_true")
     args = parser.parse_args()
 
-    if not 1 <= args.budget <= 500:
-        parser.error("--budget must be between 1 and 500")
+    if not 1 <= args.budget <= MAX_BUDGET:
+        parser.error(f"--budget must be between 1 and {MAX_BUDGET}")
 
     checkpoints = {
         "crossref": load_checkpoint(args.state_dir / "crossref.json", "crossref"),
