@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Literal
+import json
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -107,6 +110,10 @@ _ALLOWED_EVIDENCE = frozenset(
 )
 
 
+class BridgeExportError(ValueError):
+    """Raised when a linked Coach bundle cannot be exported without ambiguity."""
+
+
 def stable_research_unit_id(knowledge_unit_id: str) -> int:
     """Return the deterministic Coach numeric id reserved for a canonical KU."""
     payload = f"coach-linked-v1:{knowledge_unit_id}".encode()
@@ -165,3 +172,231 @@ class CoachProjectionV1(BaseModel):
         if value not in _ALLOWED_EVIDENCE:
             raise ValueError(f"unknown evidence_code: {value}")
         return value
+
+
+class LinkedSourceV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str
+    source_identifier: str
+    title: str
+    url: str
+    adapter: str
+
+
+class LinkedCoachUnitV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    research_unit_id: int
+    knowledge_unit_id: str
+    claim: str
+    domain_codes: list[str]
+    metric_codes: list[str]
+    policy_codes: list[str]
+    effect_code: str
+    evidence_code: str
+    provenance_code: Literal["LINKED"] = "LINKED"
+    source_ids: list[str]
+    confidence: float
+    limitation: str
+    may_infer: list[str]
+    may_not_infer: list[str]
+    projection_reason: str
+
+
+class LinkedCoachBundleV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["coach-linked-bundle-v1"] = "coach-linked-bundle-v1"
+    units: list[LinkedCoachUnitV1]
+    sources: list[LinkedSourceV1]
+    skipped: dict[str, int]
+
+
+class LinkedCoachManifestV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["coach-linked-manifest-v1"] = "coach-linked-manifest-v1"
+    unit_count: int
+    source_count: int
+    units_sha256: str
+    sources_sha256: str
+
+
+def _required_text(record: dict[str, Any], field_name: str, knowledge_unit_id: str) -> str:
+    value = record.get(field_name)
+    if not isinstance(value, str) or not value.strip():
+        raise BridgeExportError(f"{knowledge_unit_id}: missing {field_name}")
+    return value.strip()
+
+
+def _source_id(source_identifier: str, url: str) -> str:
+    identity = source_identifier.strip().casefold() or url.strip().casefold()
+    digest = hashlib.sha256(f"coach-linked-source-v1:{identity}".encode()).hexdigest()
+    return f"SRC-{digest[:16]}"
+
+
+def _canonical_index(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    by_id: dict[str, dict[str, Any]] = {}
+    for record in records:
+        knowledge_unit_id = record.get("knowledge_unit_id")
+        if not isinstance(knowledge_unit_id, str) or not knowledge_unit_id.startswith("KU-"):
+            raise BridgeExportError("malformed knowledge_unit_id")
+        existing = by_id.get(knowledge_unit_id)
+        if existing is not None and existing != record:
+            raise BridgeExportError(
+                f"conflicting duplicate knowledge_unit_id: {knowledge_unit_id}"
+            )
+        by_id[knowledge_unit_id] = record
+    return by_id
+
+
+def _projection_index(projections: list[CoachProjectionV1]) -> dict[str, CoachProjectionV1]:
+    by_id: dict[str, CoachProjectionV1] = {}
+    for projection in projections:
+        existing = by_id.get(projection.knowledge_unit_id)
+        if existing is not None and existing != projection:
+            raise BridgeExportError(
+                f"conflicting duplicate projection: {projection.knowledge_unit_id}"
+            )
+        by_id[projection.knowledge_unit_id] = projection
+    return by_id
+
+
+def build_linked_bundle(
+    records: list[dict[str, Any]],
+    projections: list[CoachProjectionV1],
+    *,
+    id_func: Callable[[str], int] = stable_research_unit_id,
+) -> LinkedCoachBundleV1:
+    """Build a deterministic LINKED-only Coach bundle from reviewed canonical KUs."""
+    canonical_by_id = _canonical_index(records)
+    projection_by_id = _projection_index(projections)
+    units: list[LinkedCoachUnitV1] = []
+    sources_by_id: dict[str, LinkedSourceV1] = {}
+    numeric_ids: dict[int, str] = {}
+    skipped: dict[str, int] = {}
+
+    def skip(reason: str) -> None:
+        skipped[reason] = skipped.get(reason, 0) + 1
+
+    for knowledge_unit_id in sorted(canonical_by_id):
+        record = canonical_by_id[knowledge_unit_id]
+        provenance = record.get("provenance")
+        if not isinstance(provenance, dict) or provenance.get("status") != "LINKED":
+            skip("provenance_not_linked")
+            continue
+
+        projection = projection_by_id.get(knowledge_unit_id)
+        if projection is None:
+            skip("projection_missing")
+            continue
+
+        research_unit_id = id_func(knowledge_unit_id)
+        previous_ku = numeric_ids.get(research_unit_id)
+        if previous_ku is not None and previous_ku != knowledge_unit_id:
+            raise BridgeExportError(
+                "research_unit_id collision: "
+                f"{research_unit_id} maps both {previous_ku} and {knowledge_unit_id}"
+            )
+        numeric_ids[research_unit_id] = knowledge_unit_id
+
+        source_identifier = _required_text(record, "source_identifier", knowledge_unit_id)
+        source_url = _required_text(record, "source_url", knowledge_unit_id)
+        source_title = _required_text(record, "source_title", knowledge_unit_id)
+        adapter = provenance.get("adapter")
+        if not isinstance(adapter, str) or not adapter.strip():
+            raise BridgeExportError(f"{knowledge_unit_id}: missing provenance adapter")
+        source_id = _source_id(source_identifier, source_url)
+        source = LinkedSourceV1(
+            source_id=source_id,
+            source_identifier=source_identifier,
+            title=source_title,
+            url=source_url,
+            adapter=adapter.strip(),
+        )
+        existing_source = sources_by_id.get(source_id)
+        if existing_source is not None and existing_source != source:
+            raise BridgeExportError(f"conflicting source identity: {source_id}")
+        sources_by_id[source_id] = source
+
+        safe_inference = record.get("safe_inference")
+        if not isinstance(safe_inference, dict):
+            raise BridgeExportError(f"{knowledge_unit_id}: missing safe_inference")
+        may_infer = safe_inference.get("may_infer")
+        may_not_infer = safe_inference.get("may_not_infer")
+        if not isinstance(may_infer, list) or not all(isinstance(x, str) for x in may_infer):
+            raise BridgeExportError(f"{knowledge_unit_id}: invalid may_infer")
+        if not isinstance(may_not_infer, list) or not all(
+            isinstance(x, str) for x in may_not_infer
+        ):
+            raise BridgeExportError(f"{knowledge_unit_id}: invalid may_not_infer")
+
+        confidence = record.get("confidence")
+        if not isinstance(confidence, int | float) or isinstance(confidence, bool):
+            raise BridgeExportError(f"{knowledge_unit_id}: invalid confidence")
+
+        units.append(
+            LinkedCoachUnitV1(
+                research_unit_id=research_unit_id,
+                knowledge_unit_id=knowledge_unit_id,
+                claim=_required_text(record, "claim", knowledge_unit_id),
+                domain_codes=projection.domain_codes,
+                metric_codes=projection.metric_codes,
+                policy_codes=projection.policy_codes,
+                effect_code=projection.effect_code,
+                evidence_code=projection.evidence_code,
+                source_ids=[source_id],
+                confidence=float(confidence),
+                limitation=_required_text(
+                    record, "contradiction_or_limitation", knowledge_unit_id
+                ),
+                may_infer=may_infer,
+                may_not_infer=may_not_infer,
+                projection_reason=projection.projection_reason,
+            )
+        )
+
+    units.sort(key=lambda unit: (unit.research_unit_id, unit.knowledge_unit_id))
+    sources = sorted(sources_by_id.values(), key=lambda source: source.source_id)
+    return LinkedCoachBundleV1(units=units, sources=sources, skipped=dict(sorted(skipped.items())))
+
+
+def _jsonl_bytes(models: list[BaseModel]) -> bytes:
+    lines = [
+        json.dumps(model.model_dump(mode="json"), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        for model in models
+    ]
+    if not lines:
+        return b""
+    return ("\n".join(lines) + "\n").encode()
+
+
+def write_linked_bundle(
+    bundle: LinkedCoachBundleV1,
+    output_dir: Path,
+) -> LinkedCoachManifestV1:
+    """Write deterministic JSONL bundle files and a hash-bound manifest."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    units_bytes = _jsonl_bytes(bundle.units)
+    sources_bytes = _jsonl_bytes(bundle.sources)
+    (output_dir / "units.jsonl").write_bytes(units_bytes)
+    (output_dir / "sources.jsonl").write_bytes(sources_bytes)
+
+    manifest = LinkedCoachManifestV1(
+        unit_count=len(bundle.units),
+        source_count=len(bundle.sources),
+        units_sha256=hashlib.sha256(units_bytes).hexdigest(),
+        sources_sha256=hashlib.sha256(sources_bytes).hexdigest(),
+    )
+    manifest_bytes = (
+        json.dumps(
+            manifest.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode()
+    (output_dir / "manifest.json").write_bytes(manifest_bytes)
+    return manifest
