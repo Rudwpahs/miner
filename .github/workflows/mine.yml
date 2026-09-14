@@ -41,6 +41,11 @@ jobs:
           git show FETCH_HEAD:state/crossref.json > _state_current/crossref.json
           git show FETCH_HEAD:state/youtube_rss.json > _state_current/youtube_rss.json
           git show FETCH_HEAD:state/seen_hashes.jsonl > _state_current/seen_hashes.jsonl
+          if git cat-file -e FETCH_HEAD:state/seen_crossref_dois.jsonl 2>/dev/null; then
+            git show FETCH_HEAD:state/seen_crossref_dois.jsonl > _state_current/seen_crossref_dois.jsonl
+          else
+            : > _state_current/seen_crossref_dois.jsonl
+          fi
       - name: Mine and export
         env:
           HOOPHUB_MINER_TOKEN: ${{ secrets.HOOPHUB_MINER_TOKEN }}
@@ -86,16 +91,18 @@ jobs:
           test -f _state_next/crossref.json
           test -f _state_next/youtube_rss.json
           test -f _state_next/seen_hashes.jsonl
-          test "$(find _state_next -type f | wc -l)" -eq 3
+          test -f _state_next/seen_crossref_dois.jsonl
+          test "$(find _state_next -type f | wc -l)" -eq 4
       - name: Persist safe state only
         run: |
           mkdir -p state
           cp _state_next/crossref.json state/crossref.json
           cp _state_next/youtube_rss.json state/youtube_rss.json
           cp _state_next/seen_hashes.jsonl state/seen_hashes.jsonl
+          cp _state_next/seen_crossref_dois.jsonl state/seen_crossref_dois.jsonl
           git config user.name "basketball-knowledge-miner[bot]"
           git config user.email "basketball-knowledge-miner[bot]@users.noreply.github.com"
-          git add state/crossref.json state/youtube_rss.json state/seen_hashes.jsonl
+          git add state/crossref.json state/youtube_rss.json state/seen_hashes.jsonl state/seen_crossref_dois.jsonl
           if git diff --cached --quiet; then
             exit 0
           fi

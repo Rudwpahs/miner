@@ -9,6 +9,7 @@ from pathlib import Path
 from basketball_miner.export import GitHubPrivateRepoSink, ensure_private_repo
 from basketball_miner.models import CandidateRecord, Checkpoint
 from basketball_miner.run import MAX_BUDGET, run_miner
+from basketball_miner.source_identity import CrossrefIdentityVerifier
 from basketball_miner.sources.crossref import CrossrefAdapter
 from basketball_miner.sources.youtube_rss import YouTubeRssAdapter, load_channel_ids
 from basketball_miner.state import load_checkpoint, save_checkpoint
@@ -28,22 +29,27 @@ def _load_seen(path: Path) -> set[str]:
     return {line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()}
 
 
+def _save_lines(path: Path, values: set[str]) -> None:
+    path.write_text(
+        "".join(f"{value}\n" for value in sorted(values)),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def _save_state(
     directory: Path,
     checkpoints: dict[str, Checkpoint],
     seen_hashes: set[str],
+    seen_crossref_dois: set[str],
 ) -> None:
     if directory.exists():
         shutil.rmtree(directory)
     directory.mkdir(parents=True)
     for adapter, checkpoint in sorted(checkpoints.items()):
         save_checkpoint(directory / f"{adapter}.json", checkpoint)
-    seen_path = directory / "seen_hashes.jsonl"
-    seen_path.write_text(
-        "".join(f"{digest}\n" for digest in sorted(seen_hashes)),
-        encoding="utf-8",
-        newline="\n",
-    )
+    _save_lines(directory / "seen_hashes.jsonl", seen_hashes)
+    _save_lines(directory / "seen_crossref_dois.jsonl", seen_crossref_dois)
 
 
 def _safe_summary(counters, *, export_enabled: bool) -> str:
@@ -58,6 +64,12 @@ def _safe_summary(counters, *, export_enabled: bool) -> str:
             "would_export": counters.exported if not export_enabled else 0,
             "rate_limited": counters.rate_limited,
             "adapter_errors": counters.adapter_errors,
+            "identity_verified": counters.identity_verified,
+            "identity_variants": counters.identity_variants,
+            "identity_ambiguous": counters.identity_ambiguous,
+            "identity_mismatches": counters.identity_mismatches,
+            "identity_unverified": counters.identity_unverified,
+            "identity_collisions": counters.identity_collisions,
         },
         sort_keys=True,
     )
@@ -80,10 +92,12 @@ def main() -> int:
         "youtube_rss": load_checkpoint(args.state_dir / "youtube_rss.json", "youtube_rss"),
     }
     seen_hashes = _load_seen(args.state_dir / "seen_hashes.jsonl")
+    seen_crossref_dois = _load_seen(args.state_dir / "seen_crossref_dois.jsonl")
     adapters = [
         CrossrefAdapter(),
         YouTubeRssAdapter(load_channel_ids(args.youtube_config)),
     ]
+    identity_verifier = CrossrefIdentityVerifier()
 
     if args.no_export:
         counters = run_miner(
@@ -92,6 +106,8 @@ def main() -> int:
             budget=args.budget,
             checkpoints=checkpoints,
             seen_hashes=seen_hashes,
+            seen_crossref_dois=seen_crossref_dois,
+            identity_verifier=identity_verifier,
         )
         print(_safe_summary(counters, export_enabled=False))
         return 0
@@ -117,8 +133,10 @@ def main() -> int:
         budget=args.budget,
         checkpoints=checkpoints,
         seen_hashes=seen_hashes,
+        seen_crossref_dois=seen_crossref_dois,
+        identity_verifier=identity_verifier,
     )
-    _save_state(args.next_state_dir, checkpoints, seen_hashes)
+    _save_state(args.next_state_dir, checkpoints, seen_hashes, seen_crossref_dois)
     print(_safe_summary(counters, export_enabled=True))
     return 0
 
