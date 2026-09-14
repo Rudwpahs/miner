@@ -161,3 +161,20 @@ def test_serialization_is_byte_deterministic_and_manifest_hashes_match(tmp_path)
     assert first_manifest.sources_sha256 == hashlib.sha256(first_sources).hexdigest()
     assert first_manifest.units_sha256 == second_manifest.units_sha256
     assert first_manifest.sources_sha256 == second_manifest.sources_sha256
+    assert first_manifest.exporter_version == "coach-provenance-bridge-v1"
+    assert first_manifest.id_derivation_version == "coach-linked-v1"
+    assert first_manifest.codebook_version == "coach-bridge-codes-v1"
+    assert first_manifest.canonical_input_count == 2
+    assert first_manifest.projection_input_count == 2
+    assert first_manifest.exported_unit_count == 2
+    assert first_manifest.linked_count == 2
+    assert first_manifest.source_count == 1
+    assert first_manifest.skipped == {}
+    assert first_manifest.collision_count == 0
+    assert first_manifest.unit_ordering == "research_unit_id,knowledge_unit_id"
+    assert first_manifest.source_ordering == "source_id"
+    assert sorted(path.name for path in first_dir.iterdir()) == [
+        "manifest.json",
+        "sources.jsonl",
+        "units.jsonl",
+    ]
