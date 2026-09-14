@@ -46,6 +46,16 @@ class StageMaterialization:
     metrics: DailyMetrics
 
 
+@dataclass(frozen=True)
+class _RemoteMaterializationContext:
+    materialization: StageMaterialization
+    ledger_sha: str | None
+    metrics_sha: str | None
+    next_payloads: dict[str, bytes]
+    missing_paths: tuple[str, ...]
+    invariant_failures: tuple[str, ...]
+
+
 def _parse_records(stage: Stage, payload: dict[str, object]) -> list[SemanticResult | ShadowAuditResult]:
     raw_records = payload.get("records")
     if not isinstance(raw_records, list):
@@ -372,13 +382,12 @@ def _preflight_next_queues(
     return dict(sorted(payloads.items())), sorted(missing)
 
 
-def run_remote_materialization(
+def _compute_remote_materialization(
     *,
     store: GitHubV3Store,
     run_date: str,
     created_at: str,
-    write_shadow: bool,
-) -> dict[str, object]:
+) -> _RemoteMaterializationContext:
     staging_blobs = discover_staging_blobs(store)
     source_batches = load_source_batches(store, staging_blobs)
     existing_ledger, ledger_sha = _load_remote_ledger(store)
@@ -389,14 +398,28 @@ def run_remote_materialization(
         run_date=run_date,
         created_at=created_at,
     )
-    invariant_failures = check_release_invariants(materialization.metrics)
+    invariant_failures = tuple(check_release_invariants(materialization.metrics))
     if invariant_failures:
         raise RuntimeError(f"hard invariant failure: {','.join(invariant_failures)}")
-
     next_payloads, missing_paths = _preflight_next_queues(store, materialization.next_batches)
     metrics_remote = store.read_file(metrics_path(run_date))
+    return _RemoteMaterializationContext(
+        materialization=materialization,
+        ledger_sha=ledger_sha,
+        metrics_sha=metrics_remote.sha if metrics_remote is not None else None,
+        next_payloads=next_payloads,
+        missing_paths=tuple(missing_paths),
+        invariant_failures=invariant_failures,
+    )
 
-    summary: dict[str, object] = {
+
+def _materialization_summary(
+    context: _RemoteMaterializationContext,
+    *,
+    write_shadow: bool,
+) -> dict[str, object]:
+    materialization = context.materialization
+    return {
         "staging_files_seen": materialization.metrics.staging_files_seen,
         "staging_files_materialized": materialization.metrics.staging_files_materialized,
         "batches_completed": materialization.metrics.batches_completed,
@@ -406,38 +429,69 @@ def run_remote_materialization(
         ),
         "next_batch_ids": [batch.batch_id for batch in materialization.next_batches],
         "next_batch_payloads": {
-            path: content.decode("utf-8") for path, content in next_payloads.items()
+            path: content.decode("utf-8") for path, content in context.next_payloads.items()
         },
         "processed_staging_shas": list(materialization.processed_staging_shas),
         "completed_batch_ids": list(materialization.completed_batch_ids),
-        "invariant_failures": invariant_failures,
+        "invariant_failures": list(context.invariant_failures),
         "write_enabled": write_shadow,
     }
+
+
+def _run_remote_materialization_with_state(
+    *,
+    store: GitHubV3Store,
+    run_date: str,
+    created_at: str,
+    write_shadow: bool,
+) -> tuple[dict[str, object], DistillLedger]:
+    context = _compute_remote_materialization(
+        store=store,
+        run_date=run_date,
+        created_at=created_at,
+    )
+    summary = _materialization_summary(context, write_shadow=write_shadow)
     if not write_shadow:
-        return summary
+        return summary, context.materialization.ledger
 
     latest_ledger = store.read_file(ledger_path())
     latest_sha = latest_ledger.sha if latest_ledger is not None else None
-    if latest_sha != ledger_sha:
+    if latest_sha != context.ledger_sha:
         raise RuntimeError("stale remote SHA")
 
-    for path in missing_paths:
+    for path in context.missing_paths:
         store.create_immutable(
             path,
-            next_payloads[path],
+            context.next_payloads[path],
             f"distill-v3: stage {path.rsplit('/', 1)[-1].removesuffix('.json')}",
         )
 
     store.update_mutable(
         metrics_path(run_date),
-        _json_bytes(materialization.metrics.model_dump(mode="json")),
-        expected_sha=metrics_remote.sha if metrics_remote is not None else None,
+        _json_bytes(context.materialization.metrics.model_dump(mode="json")),
+        expected_sha=context.metrics_sha,
         message=f"distill-v3: update materializer metrics {run_date}",
     )
     store.update_mutable(
         ledger_path(),
-        _json_bytes(ledger_payload(materialization.ledger)),
-        expected_sha=ledger_sha,
+        _json_bytes(ledger_payload(context.materialization.ledger)),
+        expected_sha=context.ledger_sha,
         message="distill-v3: materialize shadow staging",
+    )
+    return summary, context.materialization.ledger
+
+
+def run_remote_materialization(
+    *,
+    store: GitHubV3Store,
+    run_date: str,
+    created_at: str,
+    write_shadow: bool,
+) -> dict[str, object]:
+    summary, _ledger = _run_remote_materialization_with_state(
+        store=store,
+        run_date=run_date,
+        created_at=created_at,
+        write_shadow=write_shadow,
     )
     return summary
