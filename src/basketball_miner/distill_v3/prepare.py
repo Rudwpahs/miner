@@ -11,6 +11,7 @@ from basketball_miner.models import CandidateRecord
 from .concept_index import ConceptIndexRecord, build_index
 from .github_store import GitHubV3Store
 from .ledger import DistillLedger, ledger_payload, seed_from_v2_history
+from .materialize import _run_remote_materialization_with_state
 from .metrics import DailyMetrics, check_release_invariants
 from .models import BatchRecord
 from .paths import concept_index_path, ledger_path, metrics_path, queue_path
@@ -363,6 +364,24 @@ def _persist_shadow(
     )
 
 
+def _preparation_summary(
+    preparation: ShadowPreparation,
+    *,
+    write_shadow: bool,
+) -> dict[str, object]:
+    invariant_failures = check_release_invariants(preparation.metrics)
+    return {
+        "new_inbox_blobs": len(preparation.processed_blob_shas),
+        "new_candidates": preparation.metrics.unique_candidates,
+        "duplicates": preparation.metrics.exact_duplicates,
+        "triage_candidates": sum(len(batch.candidate_ids) for batch in preparation.triage_batches),
+        "triage_batches": len(preparation.triage_batches),
+        "review_seeded": len(preparation.ledger.review_candidate_ids),
+        "invariant_failures": invariant_failures,
+        "write_enabled": write_shadow,
+    }
+
+
 def run_remote_shadow(
     *,
     store: GitHubV3Store,
@@ -384,17 +403,8 @@ def run_remote_shadow(
         created_at=created_at,
         triage_batch_size=batch_size,
     )
-    invariant_failures = check_release_invariants(preparation.metrics)
-    summary: dict[str, object] = {
-        "new_inbox_blobs": len(preparation.processed_blob_shas),
-        "new_candidates": preparation.metrics.unique_candidates,
-        "duplicates": preparation.metrics.exact_duplicates,
-        "triage_candidates": sum(len(batch.candidate_ids) for batch in preparation.triage_batches),
-        "triage_batches": len(preparation.triage_batches),
-        "review_seeded": len(preparation.ledger.review_candidate_ids),
-        "invariant_failures": invariant_failures,
-        "write_enabled": write_shadow,
-    }
+    summary = _preparation_summary(preparation, write_shadow=write_shadow)
+    invariant_failures = summary["invariant_failures"]
     if invariant_failures:
         raise RuntimeError(f"hard invariant failure: {','.join(invariant_failures)}")
     if write_shadow:
@@ -405,3 +415,55 @@ def run_remote_shadow(
             run_date=run_date,
         )
     return summary
+
+
+def run_remote_v3_cycle(
+    *,
+    store: GitHubV3Store,
+    run_date: str,
+    created_at: str,
+    batch_size: int,
+    write_shadow: bool,
+) -> dict[str, object]:
+    materialize_summary, materialized_ledger = _run_remote_materialization_with_state(
+        store=store,
+        run_date=run_date,
+        created_at=created_at,
+        write_shadow=write_shadow,
+    )
+    if write_shadow:
+        existing_ledger, ledger_sha = _load_existing_ledger(store)
+        if existing_ledger is None:
+            raise RuntimeError("materialized V3 ledger is missing after persistence")
+    else:
+        existing_ledger = materialized_ledger
+        ledger_sha = None
+
+    inbox_blobs = load_inbox_blobs(store)
+    accepted_rows, review_rows, manifests = load_v2_history(store)
+    preparation = prepare_shadow(
+        inbox_blobs=inbox_blobs,
+        existing_ledger=existing_ledger,
+        accepted_rows=accepted_rows,
+        review_rows=review_rows,
+        manifests=manifests,
+        run_date=run_date,
+        created_at=created_at,
+        triage_batch_size=batch_size,
+    )
+    prepare_summary = _preparation_summary(preparation, write_shadow=write_shadow)
+    invariant_failures = prepare_summary["invariant_failures"]
+    if invariant_failures:
+        raise RuntimeError(f"hard invariant failure: {','.join(invariant_failures)}")
+    if write_shadow:
+        _persist_shadow(
+            store=store,
+            preparation=preparation,
+            ledger_sha=ledger_sha,
+            run_date=run_date,
+        )
+    return {
+        "materialize": materialize_summary,
+        "prepare": prepare_summary,
+        "write_enabled": write_shadow,
+    }
