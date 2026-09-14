@@ -41,6 +41,9 @@ class DistillLedger(BaseModel):
         self.normalized_source_keys.add(normalized_source_key(candidate))
         self.canonical_hashes.add(candidate.canonical_hash)
 
+        if candidate.candidate_id in self.candidate_states:
+            return
+
         status = "PENDING" if route.route == "TRIAGE" else "COMPLETE"
         self.candidate_states[candidate.candidate_id] = CandidateStageState(
             candidate_id=candidate.candidate_id,
