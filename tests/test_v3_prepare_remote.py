@@ -7,7 +7,9 @@ from dataclasses import dataclass, field
 import pytest
 
 from basketball_miner.distill_v3.github_store import RemoteEntry, RemoteFile
+from basketball_miner.distill_v3.ids import make_batch_id
 from basketball_miner.distill_v3.ledger import DistillLedger, ledger_payload
+from basketball_miner.distill_v3.models import BatchRecord
 from basketball_miner.distill_v3.paths import (
     concept_index_path,
     ledger_path,
@@ -20,7 +22,9 @@ from basketball_miner.distill_v3.prepare import (
     load_v2_history,
     prepare_shadow,
     run_remote_shadow,
+    run_remote_v3_cycle,
 )
+from basketball_miner.distill_v3.router import route_candidate
 from basketball_miner.models import CandidateRecord
 
 
@@ -256,3 +260,73 @@ def test_queue_collision_with_different_bytes_aborts_instead_of_renaming():
             write_shadow=True,
         )
     assert not any(path != collision_path for _kind, path, _sha in store.writes)
+
+
+def test_cycle_materializes_before_preparing_fresh_inbox():
+    candidate = _candidate()
+    ledger = DistillLedger()
+    route = route_candidate(candidate, ledger)
+    ledger.record_route(candidate, route)
+    batch_id = make_batch_id("TRIAGE", [candidate.candidate_id])
+    ledger.candidate_states[candidate.candidate_id].batch_id = batch_id
+    batch = BatchRecord(
+        batch_id=batch_id,
+        stage="TRIAGE",
+        candidate_ids=[candidate.candidate_id],
+        priority=85,
+        created_at="2026-09-14T00:00:00Z",
+        input_fingerprints=[candidate.canonical_hash],
+        status="PENDING",
+    )
+    queue = queue_path("TRIAGE", batch_id)
+    staging = "ml/coach/miner-data/v3/staging/triage/2026/09/14/RUN-CYCLE.jsonl"
+    inbox = "ml/coach/miner-data/inbox/2026/09/14/replay.jsonl"
+    envelope = {
+        "run_id": "RUN-CYCLE",
+        "batch_id": batch_id,
+        "stage": "TRIAGE",
+        "worker": "GPT-V3",
+        "created_at": "2026-09-14T00:10:00Z",
+        "input_fingerprints": [candidate.canonical_hash],
+        "records": [
+            {
+                "candidate_id": candidate.candidate_id,
+                "stage": "TRIAGE",
+                "decision": "DEEP_PENDING",
+                "reason_code": "RELEVANT",
+            }
+        ],
+    }
+    store = MemoryStore(
+        files={
+            ledger_path(): _remote(
+                ledger_path(), json.dumps(ledger_payload(ledger), sort_keys=True) + "\n", "a"
+            ),
+            queue: _remote(
+                queue,
+                json.dumps(batch.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+                + "\n",
+                "b",
+            ),
+            staging: _remote(
+                staging, json.dumps(envelope, sort_keys=True, separators=(",", ":")) + "\n", "c"
+            ),
+            inbox: _remote(inbox, _inbox_jsonl(candidate), "d"),
+        }
+    )
+
+    summary = run_remote_v3_cycle(
+        store=store,
+        run_date="2026-09-14",
+        created_at="2026-09-14T00:20:00Z",
+        batch_size=100,
+        write_shadow=True,
+    )
+
+    assert summary["materialize"]["next_batches_created_by_stage"] == {"DEEP": 1}
+    assert summary["prepare"]["triage_batches"] == 0
+    assert summary["write_enabled"] is True
+    persisted = DistillLedger.model_validate(json.loads(store.files[ledger_path()].content))
+    state = persisted.candidate_states[candidate.candidate_id]
+    assert (state.stage, state.status) == ("DEEP", "PENDING")
+    assert state.batch_id is not None and state.batch_id.startswith("V3-DEEP-")
