@@ -3,6 +3,10 @@ name: FormPath Distillation V3 Prepare
 on:
   schedule:
     - cron: "42 * * * *"
+  push:
+    branches: ["main"]
+    paths:
+      - ".distill-v3-trigger"
   workflow_dispatch:
     inputs:
       write_shadow:
@@ -41,7 +45,7 @@ jobs:
           WRITE_SHADOW: ${{ inputs.write_shadow }}
         run: |
           RUN_DATE="$(TZ=Asia/Seoul date +%F)"
-          if [ "$EVENT_NAME" = "schedule" ] || [ "$WRITE_SHADOW" = "true" ]; then
+          if [ "$EVENT_NAME" = "schedule" ] || [ "$EVENT_NAME" = "push" ] || [ "$WRITE_SHADOW" = "true" ]; then
             python scripts/run_distill_v3_prepare.py --repo Rudwpahs/hoopDB --branch main --run-date "$RUN_DATE" --write-shadow
           else
             python scripts/run_distill_v3_prepare.py --repo Rudwpahs/hoopDB --branch main --run-date "$RUN_DATE" --dry-run
