@@ -33,11 +33,34 @@ private이 아니면 중단
 
 즉, 많이 긁어오는 것이 목표가 아니라 **출처가 남고, 중복이 줄어들고, 공개/비공개 경계를 넘지 않는 후보 데이터**를 만드는 것이 목표입니다.
 
-## 스케줄과 한도
+## Daily target
 
-production workflow는 `17 */3 * * *` UTC로 하루 8회 실행되도록 구성되어 있고, 한 번에 최대 20,000개 source record를 검사합니다. 이론상 하루 최대 160,000개를 볼 수 있지만 실제 후보 수는 관련성 검사와 중복 제거 때문에 더 적습니다.
+production Miner는 매시간 `07`, `27`, `47`분에 실행 기회를 가집니다. 각 실행은 `config/miner_target.json`의 `daily_target`을 읽고, 서울 날짜 기준 오늘 누적 수집량이 목표에 도달하면 source API 호출 전에 즉시 종료합니다.
 
-GitHub cron은 정확한 시각보다 늦게 시작될 수 있고 외부 API 정책·quota도 바뀔 수 있습니다.
+목표량을 바꾸려면 Python 코드나 workflow를 수정하지 않고 아래 파일의 `daily_target` 숫자 하나만 변경합니다.
+
+```text
+config/miner_target.json
+```
+
+마지막 실행에서는 남은 quota보다 더 많은 source record를 fetch하지 않기 때문에 목표량을 넘기기 위해 checkpoint를 앞당기지 않습니다. GitHub cron 지연, 외부 API rate limit, 실제 관련 후보 공급량에 따라 특정 날짜의 실제 수집량은 목표보다 적을 수 있습니다.
+
+## Miner Live
+
+공개 dashboard는 후보 원문이 아니라 다음 **집계값만** 보여줍니다.
+
+- 현재 총 수집 데이터
+- 증류 대기
+- 증류 성공
+- 오늘 수집량 / 오늘 목표량
+- 최근 7일 일별 수집량
+- 마지막 Miner 실행 시각
+- 마지막 증류 성공 시각
+- 현재 시스템 상태
+
+브라우저는 같은 origin의 `status.json`만 읽으며 candidate title, URL/DOI, author, summary, candidate ID, canonical hash, queue ID, knowledge-unit text는 공개 asset에 포함하지 않습니다. 상태 JSON은 GitHub Actions가 private `Rudwpahs/hoopDB`를 서버측에서 읽어 숫자로 축약한 뒤 GitHub Pages에 배포합니다.
+
+dashboard는 5분 주기로 reconcile되고, 브라우저는 60초마다 최신 `status.json`을 다시 확인합니다. 새 상태를 읽지 못하면 화면에 `STALE` 상태를 표시합니다.
 
 ## Distillation V3 알고리즘
 
@@ -74,7 +97,7 @@ CANONICAL KNOWLEDGE
 - Deep의 `PROPOSE_ACCEPT`만으로 승인되지 않음
 - Judge의 `CONFIRM`이 필요함
 - staging은 같은 byte의 재시도는 허용하지만 내용이 바뀐 overwrite는 거부
-- 실제 canonical promotion은 future Auditor integration만 수행
+- 실제 canonical promotion은 Auditor integration만 수행
 
 ## V3 dry-run
 
