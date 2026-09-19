@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ASSETS = ["dashboard/index.html", "dashboard/app.js", "dashboard/styles.css"]
 
 
