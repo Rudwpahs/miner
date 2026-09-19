@@ -169,7 +169,7 @@ def bootstrap_collection_stats(
         parts = path.split("/")
         try:
             year_index = parts.index("inbox") + 1
-            date = "-".join(parts[year_index : year_index + 3])
+            fallback_date = "-".join(parts[year_index : year_index + 3])
         except (ValueError, IndexError) as exc:
             raise ValueError(f"invalid inbox path: {path}") from exc
         remote = store.read_file(path)
@@ -187,7 +187,19 @@ def bootstrap_collection_stats(
             if candidate_id in seen:
                 continue
             seen.add(candidate_id)
-            daily_counts[date] = daily_counts.get(date, 0) + 1
+            discovered_raw = row.get("discovered_at")
+            if discovered_raw is None:
+                discovery_date = fallback_date
+            elif isinstance(discovered_raw, str):
+                discovery_date = (
+                    _aware_timestamp(discovered_raw, field="discovered_at")
+                    .astimezone(_KST)
+                    .date()
+                    .isoformat()
+                )
+            else:
+                raise TypeError(f"invalid discovered_at in inbox: {path}")
+            daily_counts[discovery_date] = daily_counts.get(discovery_date, 0) + 1
             _restore_seen_state(
                 row,
                 seen_hashes=seen_hashes,
