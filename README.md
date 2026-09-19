@@ -1,32 +1,82 @@
 # Basketball Knowledge Miner
 
-Public collector for Hooper's Hub / FormPath. V1 is designed to run as a lightweight GitHub Actions batch job every three hours, inspect at most 20,000 source records per run, keep only basketball-relevant metadata, deduplicate it, and export accepted candidates to a separate private candidate inbox.
+농구 관련 자료를 많이 모으되, 아무 자료나 바로 FormPath 지식으로 넣지 않기 위해 만든 공개 수집기입니다. 이 저장소는 **수집과 1차 정리**를 담당하고, 실제 후보 데이터는 비공개 `Rudwpahs/hoopDB`로 넘깁니다.
 
-## V1 sources
+## V1에서 보는 소스
 
-- Crossref scholarly metadata
-- Explicitly allowlisted YouTube channels for high-quality coaching or direct-expert material
-- The architecture leaves room for additional official/API-backed adapters after they receive the same fixture, rate-limit, and provenance tests
+- Crossref 학술 메타데이터
+- 명시적으로 허용한 YouTube 코칭 / 전문가 채널
+- 같은 provenance·rate-limit·fixture 검증을 통과한 추가 공식/API 소스
 
-Reddit, broad social scraping, paywall bypass, anti-bot bypass, raw video, full transcripts, full copyrighted articles, private FormPath research-unit text, and Coach private evidence do **not** belong in this repository.
+Reddit 전체 스크래핑, paywall 우회, anti-bot 우회, 원본 영상, 전체 transcript, 전체 저작권 기사, private FormPath 연구 내용은 이 저장소의 수집 대상이 아닙니다.
 
-## Safety boundary
+## 수집 알고리즘
 
-The public repository contains collector code plus non-sensitive checkpoint state only. Candidate titles, URLs, summaries, authors, and candidate records are intended for a **private** downstream repository. The runner performs a GitHub repository-privacy preflight and refuses live export when the configured target is not private.
+```text
+source adapter에서 메타데이터 읽기
+        ↓
+공통 candidate 형식으로 normalize
+        ↓
+농구 관련성 검사
+        ↓
+불필요한 필드 제거
+        ↓
+이미 본 항목과 exact dedup
+        ↓
+통과한 candidate만 export 대상으로 구성
+        ↓
+대상 GitHub 저장소가 private인지 preflight
+        ↓
+private이면 hoopDB inbox로 export
+private이 아니면 중단
+```
 
-The production workflow targets `Rudwpahs/hoopDB`, a separate private candidate-data repository. Do not disable the privacy preflight or broaden the export token beyond that approved target.
+즉, 많이 긁어오는 것이 목표가 아니라 **출처가 남고, 중복이 줄어들고, 공개/비공개 경계를 넘지 않는 후보 데이터**를 만드는 것이 목표입니다.
 
-The public workflows do not run self-hosted GPU jobs, CUDA workloads, FormQuant, QLoRA, or other private model-compute workloads. Those belong in a separately controlled private compute environment.
+## 스케줄과 한도
 
-## Schedule and limits
+production workflow는 `17 */3 * * *` UTC로 하루 8회 실행되도록 구성되어 있고, 한 번에 최대 20,000개 source record를 검사합니다. 이론상 하루 최대 160,000개를 볼 수 있지만 실제 후보 수는 관련성 검사와 중복 제거 때문에 더 적습니다.
 
-The production workflow is configured for `17 */3 * * *` UTC, or eight scheduled runs per day, with a hard 20,000-record inspection budget per run. This is 40× the prior 500-record ceiling while keeping the same schedule frequency, for a theoretical maximum of 160,000 inspected source records per day. GitHub scheduled jobs can start later than the nominal cron time, and actual exported candidate volume will be lower because duplicate and basketball-relevance filters remain active. The design targets no incremental paid API/cloud usage, but GitHub/API policies and quotas can change and are not guaranteed by this project.
+GitHub cron은 정확한 시각보다 늦게 시작될 수 있고 외부 API 정책·quota도 바뀔 수 있습니다.
 
-## Distillation V3 core dry-run
+## Distillation V3 알고리즘
 
-The V3 core adds deterministic validation, exact deduplication, queue/lease contracts, historical knowledge indexing, immutable staging, Judge-gated promotion validation, and release metrics. Semantic decisions remain external to this deterministic core.
+V3 core는 의미 판단을 직접 하지 않고, **어떤 단계가 무엇을 할 수 있는지**를 강제로 제한합니다.
 
-Run the side-effect-free fixture pipeline with:
+```text
+RAW INBOX
+   ↓ deterministic validation
+VALIDATED
+   ↓ exact dedup + lease
+TRIAGE
+   ├─ REJECT 가능
+   └─ ACCEPT 불가
+        ↓
+DEEP REVIEW
+   ├─ REJECT
+   └─ PROPOSE_ACCEPT
+        ↓
+JUDGE
+   ├─ REJECT
+   └─ CONFIRM
+        ↓
+IMMUTABLE STAGING
+        ↓
+future AUDITOR / promotion layer
+        ↓
+CANONICAL KNOWLEDGE
+```
+
+핵심 규칙은 다음과 같습니다.
+
+- raw inbox에서 canonical로 바로 갈 수 없음
+- Triage는 ACCEPT할 수 없음
+- Deep의 `PROPOSE_ACCEPT`만으로 승인되지 않음
+- Judge의 `CONFIRM`이 필요함
+- staging은 같은 byte의 재시도는 허용하지만 내용이 바뀐 overwrite는 거부
+- 실제 canonical promotion은 future Auditor integration만 수행
+
+## V3 dry-run
 
 ```bash
 python scripts/run_distill_v3.py \
@@ -36,11 +86,9 @@ python scripts/run_distill_v3.py \
   --dry-run
 ```
 
-The core dry-run intentionally performs **no semantic ACCEPT decision, no canonical write, no private-repository write, and no GPU execution**. `--state-dir` is required to preserve the future storage interface, but the current `--dry-run` does not create or modify it. Persistent V3 storage/orchestration is a separate integration step and is rejected by this CLI until that layer is implemented.
+현재 dry-run은 semantic ACCEPT, canonical write, private repository write, GPU 실행을 하지 않습니다.
 
-The V3 safety rules are structural: raw inbox data cannot be promoted directly; Triage cannot ACCEPT; a Deep `PROPOSE_ACCEPT` cannot become canonical knowledge without a Judge `CONFIRM`; immutable staging permits an identical retry but refuses changed-byte overwrites; and only the future Auditor integration may perform canonical promotion.
-
-## Development
+## 개발
 
 ```bash
 python -m pip install -e ".[dev]"
@@ -48,12 +96,12 @@ python -m pytest -q
 python -m ruff check src tests scripts
 ```
 
-A no-export Miner collection run can be launched locally with:
+수집만 확인하려면:
 
 ```bash
 python scripts/run_miner.py --budget 50 --no-export
 ```
 
-It prints aggregate counters only and does not persist state or candidate payloads.
+이 모드는 aggregate counter만 출력하고 candidate payload를 저장하지 않습니다.
 
-Operational setup, secret permissions, state handling, and the live-export gate are documented in [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+운영 설정과 secret 권한, live-export gate는 `docs/OPERATIONS.md`에 정리되어 있습니다.
