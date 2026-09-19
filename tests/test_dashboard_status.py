@@ -1,5 +1,4 @@
 import json
-from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -12,8 +11,6 @@ from basketball_miner.dashboard_status import (
 from basketball_miner.distill_v3.concept_index import ConceptIndexRecord
 from basketball_miner.distill_v3.ledger import DistillLedger
 from basketball_miner.distill_v3.models import CandidateStageState
-
-KST = ZoneInfo("Asia/Seoul")
 
 
 def base_config():
