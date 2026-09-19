@@ -251,7 +251,7 @@ def reconcile_collection_stats(
                 row = _parse_row(line, path=entry.path)
                 discovered_raw = row.get("discovered_at")
                 if not isinstance(discovered_raw, str):
-                    raise ValueError(f"missing discovered_at in inbox: {entry.path}")
+                    raise TypeError(f"missing discovered_at in inbox: {entry.path}")
                 discovered = _aware_timestamp(discovered_raw, field="discovered_at")
                 if not cutoff < discovered <= end:
                     continue
