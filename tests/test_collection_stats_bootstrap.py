@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -8,6 +9,8 @@ from basketball_miner.collection_stats import (
     bootstrap_collection_stats,
     reconcile_collection_stats,
 )
+from basketball_miner.models import SourceRecord
+from basketball_miner.normalize import fingerprint
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -180,3 +183,48 @@ def test_reconcile_assigns_recovered_candidate_to_discovery_day_across_midnight(
     assert reconciled.collected_total == 501
     assert reconciled.today_collected == 0
     assert reconciled.daily_counts["2026-09-19"] == 101
+
+
+def test_reconcile_restores_seen_sets_for_recovered_private_export():
+    source = SourceRecord(
+        adapter="crossref",
+        source_type="academic",
+        stable_id="10.1000/recovered",
+        url="https://doi.org/10.1000/recovered",
+        title="Basketball jump shot recovery",
+        authors=["Test Author"],
+        published_at="2026-09-19",
+        summary=None,
+    )
+    row = {
+        **source.model_dump(mode="json"),
+        "candidate_id": "CAND-aaaaaaaaaaaaaaaa",
+        "discovered_at": "2026-09-19T00:10:00Z",
+    }
+    store = FakeStore(
+        {
+            "ml/coach/miner-data/inbox/2026/09/19/recovered.jsonl": (
+                json.dumps(row).encode("utf-8") + b"\n"
+            )
+        }
+    )
+    stats = CollectionStats(
+        date="2026-09-19",
+        today_collected=100,
+        collected_total=500,
+        daily_counts={"2026-09-19": 100},
+        reconciled_through_at="2026-09-19T09:00:00+09:00",
+    )
+    seen_hashes: set[str] = set()
+    seen_dois: set[str] = set()
+
+    reconcile_collection_stats(
+        store,
+        stats,
+        datetime(2026, 9, 19, 10, 0, tzinfo=KST),
+        seen_hashes=seen_hashes,
+        seen_crossref_dois=seen_dois,
+    )
+
+    assert fingerprint(source) in seen_hashes
+    assert "10.1000/recovered" in seen_dois
