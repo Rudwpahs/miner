@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
+import re
 from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -8,6 +10,8 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel, ConfigDict, Field
 
 _KST = ZoneInfo("Asia/Seoul")
+INBOX_ROOT = "ml/coach/miner-data/inbox"
+CANDIDATE_RE = re.compile(r"^CAND-[0-9a-f]{16}$")
 
 
 class MinerTargetConfig(BaseModel):
@@ -82,4 +86,56 @@ def apply_export(stats: CollectionStats, exported: int, run_at: datetime) -> Col
             "daily_counts": _pruned_counts(daily_counts),
             "last_miner_run_at": run_at.astimezone(_KST).isoformat(),
         }
+    )
+
+
+def bootstrap_collection_stats(store, now: datetime) -> CollectionStats:
+    today = _today(now)
+    seen: set[str] = set()
+    daily_counts: dict[str, int] = {}
+
+    def walk(path: str):
+        for entry in store.list_dir(path):
+            if entry.type == "dir":
+                yield from walk(entry.path)
+            elif entry.type == "file" and entry.name.endswith(".jsonl"):
+                yield entry.path
+
+    for path in sorted(walk(INBOX_ROOT)):
+        parts = path.split("/")
+        try:
+            year_index = parts.index("inbox") + 1
+            date = "-".join(parts[year_index : year_index + 3])
+        except (ValueError, IndexError) as exc:
+            raise ValueError(f"invalid inbox path: {path}") from exc
+        remote = store.read_file(path)
+        if remote is None:
+            raise RuntimeError(f"inbox file disappeared: {path}")
+        try:
+            text = remote.content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"inbox file is not UTF-8: {path}") from exc
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"invalid inbox JSONL: {path}") from exc
+            if not isinstance(row, dict):
+                raise ValueError(f"inbox row must be an object: {path}")
+            candidate_id = row.get("candidate_id")
+            if not isinstance(candidate_id, str) or CANDIDATE_RE.fullmatch(candidate_id) is None:
+                raise ValueError(f"invalid candidate_id in inbox: {path}")
+            if candidate_id in seen:
+                continue
+            seen.add(candidate_id)
+            daily_counts[date] = daily_counts.get(date, 0) + 1
+
+    pruned = _pruned_counts(daily_counts)
+    return CollectionStats(
+        date=today,
+        today_collected=pruned.get(today, 0),
+        collected_total=len(seen),
+        daily_counts=pruned,
     )

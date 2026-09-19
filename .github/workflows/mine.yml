@@ -2,7 +2,7 @@ name: Basketball Knowledge Miner
 
 on:
   schedule:
-    - cron: "17 */3 * * *"
+    - cron: "7,27,47 * * * *"
   workflow_dispatch:
     inputs:
       export:
@@ -45,6 +45,9 @@ jobs:
             git show FETCH_HEAD:state/seen_crossref_dois.jsonl > _state_current/seen_crossref_dois.jsonl
           else
             : > _state_current/seen_crossref_dois.jsonl
+          fi
+          if git cat-file -e FETCH_HEAD:state/collection_stats.json 2>/dev/null; then
+            git show FETCH_HEAD:state/collection_stats.json > _state_current/collection_stats.json
           fi
       - name: Mine and export
         env:
@@ -92,7 +95,8 @@ jobs:
           test -f _state_next/youtube_rss.json
           test -f _state_next/seen_hashes.jsonl
           test -f _state_next/seen_crossref_dois.jsonl
-          test "$(find _state_next -type f | wc -l)" -eq 4
+          test -f _state_next/collection_stats.json
+          test "$(find _state_next -type f | wc -l)" -eq 5
       - name: Persist safe state only
         run: |
           mkdir -p state
@@ -100,9 +104,10 @@ jobs:
           cp _state_next/youtube_rss.json state/youtube_rss.json
           cp _state_next/seen_hashes.jsonl state/seen_hashes.jsonl
           cp _state_next/seen_crossref_dois.jsonl state/seen_crossref_dois.jsonl
+          cp _state_next/collection_stats.json state/collection_stats.json
           git config user.name "basketball-knowledge-miner[bot]"
           git config user.email "basketball-knowledge-miner[bot]@users.noreply.github.com"
-          git add state/crossref.json state/youtube_rss.json state/seen_hashes.jsonl state/seen_crossref_dois.jsonl
+          git add state/crossref.json state/youtube_rss.json state/seen_hashes.jsonl state/seen_crossref_dois.jsonl state/collection_stats.json
           if git diff --cached --quiet; then
             exit 0
           fi
