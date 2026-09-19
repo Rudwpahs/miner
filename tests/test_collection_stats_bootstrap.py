@@ -3,7 +3,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from basketball_miner.collection_stats import bootstrap_collection_stats
+from basketball_miner.collection_stats import (
+    CollectionStats,
+    bootstrap_collection_stats,
+    reconcile_collection_stats,
+)
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -64,10 +68,12 @@ def test_bootstrap_counts_candidate_ids_once_across_days():
             ),
         }
     )
-    stats = bootstrap_collection_stats(store, datetime(2026, 9, 19, 12, 0, tzinfo=KST))
+    now = datetime(2026, 9, 19, 12, 0, tzinfo=KST)
+    stats = bootstrap_collection_stats(store, now)
     assert stats.collected_total == 3
     assert stats.today_collected == 1
     assert stats.daily_counts == {"2026-09-18": 2, "2026-09-19": 1}
+    assert stats.reconciled_through_at == now.isoformat()
 
 
 def test_bootstrap_rejects_malformed_json():
@@ -82,3 +88,95 @@ def test_bootstrap_rejects_malformed_candidate_id():
     )
     with pytest.raises(ValueError):
         bootstrap_collection_stats(store, datetime(2026, 9, 19, 12, 0, tzinfo=KST))
+
+
+def test_reconcile_recovers_failed_persist_without_double_counting():
+    store = FakeStore(
+        {
+            "ml/coach/miner-data/inbox/2026/09/19/run-a.jsonl": (
+                b'{"candidate_id":"CAND-aaaaaaaaaaaaaaaa",'
+                b'"discovered_at":"2026-09-19T00:10:00Z"}\n'
+                b'{"candidate_id":"CAND-bbbbbbbbbbbbbbbb",'
+                b'"discovered_at":"2026-09-19T00:11:00Z"}\n'
+            ),
+            "ml/coach/miner-data/inbox/2026/09/19/run-retry.jsonl": (
+                b'{"candidate_id":"CAND-aaaaaaaaaaaaaaaa",'
+                b'"discovered_at":"2026-09-19T00:10:00Z"}\n'
+            ),
+        }
+    )
+    stats = CollectionStats(
+        date="2026-09-19",
+        today_collected=100,
+        collected_total=500,
+        daily_counts={"2026-09-19": 100},
+        reconciled_through_at="2026-09-19T09:00:00+09:00",
+    )
+
+    reconciled = reconcile_collection_stats(
+        store,
+        stats,
+        datetime(2026, 9, 19, 10, 0, tzinfo=KST),
+    )
+
+    assert reconciled.collected_total == 502
+    assert reconciled.today_collected == 102
+    assert reconciled.daily_counts["2026-09-19"] == 102
+    assert reconciled.reconciled_through_at == "2026-09-19T10:00:00+09:00"
+
+
+def test_reconcile_is_idempotent_after_cursor_advances():
+    store = FakeStore(
+        {
+            "ml/coach/miner-data/inbox/2026/09/19/run-a.jsonl": (
+                b'{"candidate_id":"CAND-aaaaaaaaaaaaaaaa",'
+                b'"discovered_at":"2026-09-19T00:10:00Z"}\n'
+            )
+        }
+    )
+    stats = CollectionStats(
+        date="2026-09-19",
+        today_collected=100,
+        collected_total=500,
+        daily_counts={"2026-09-19": 100},
+        reconciled_through_at="2026-09-19T09:00:00+09:00",
+    )
+    first = reconcile_collection_stats(store, stats, datetime(2026, 9, 19, 10, 0, tzinfo=KST))
+    second = reconcile_collection_stats(store, first, datetime(2026, 9, 19, 10, 30, tzinfo=KST))
+
+    assert first.collected_total == 501
+    assert second.collected_total == 501
+    assert second.today_collected == 101
+    assert second.reconciled_through_at == "2026-09-19T10:30:00+09:00"
+
+
+def test_reconcile_assigns_recovered_candidate_to_discovery_day_across_midnight():
+    store = FakeStore(
+        {
+            "ml/coach/miner-data/inbox/2026/09/19/late.jsonl": (
+                b'{"candidate_id":"CAND-aaaaaaaaaaaaaaaa",'
+                b'"discovered_at":"2026-09-19T14:59:30Z"}\n'
+            ),
+            "ml/coach/miner-data/inbox/2026/09/20/retry.jsonl": (
+                b'{"candidate_id":"CAND-aaaaaaaaaaaaaaaa",'
+                b'"discovered_at":"2026-09-19T14:59:30Z"}\n'
+            ),
+        }
+    )
+    stats = CollectionStats(
+        date="2026-09-20",
+        today_collected=0,
+        collected_total=500,
+        daily_counts={"2026-09-19": 100},
+        reconciled_through_at="2026-09-19T23:59:00+09:00",
+    )
+
+    reconciled = reconcile_collection_stats(
+        store,
+        stats,
+        datetime(2026, 9, 20, 0, 10, tzinfo=KST),
+    )
+
+    assert reconciled.collected_total == 501
+    assert reconciled.today_collected == 0
+    assert reconciled.daily_counts["2026-09-19"] == 101
