@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -30,7 +30,7 @@ class CollectionStats(BaseModel):
     last_miner_run_at: str | None = None
 
     @classmethod
-    def empty(cls, date: str) -> "CollectionStats":
+    def empty(cls, date: str) -> CollectionStats:
         return cls(date=date, today_collected=0, collected_total=0)
 
 
@@ -123,7 +123,7 @@ def bootstrap_collection_stats(store, now: datetime) -> CollectionStats:
             except json.JSONDecodeError as exc:
                 raise ValueError(f"invalid inbox JSONL: {path}") from exc
             if not isinstance(row, dict):
-                raise ValueError(f"inbox row must be an object: {path}")
+                raise TypeError(f"inbox row must be an object: {path}")
             candidate_id = row.get("candidate_id")
             if not isinstance(candidate_id, str) or CANDIDATE_RE.fullmatch(candidate_id) is None:
                 raise ValueError(f"invalid candidate_id in inbox: {path}")
