@@ -89,11 +89,14 @@ def run_miner(
     chunk_size: int = 50,
     run_id: str | None = None,
     identity_verifier: SourceIdentityVerifier | None = None,
+    max_exports: int | None = None,
 ) -> RunCounters:
     if not 1 <= budget <= MAX_BUDGET:
         raise ValueError(f"budget must be between 1 and {MAX_BUDGET}")
     if chunk_size < 1:
         raise ValueError("chunk_size must be >= 1")
+    if max_exports is not None and max_exports < 0:
+        raise ValueError("max_exports must be >= 0")
 
     resolved_run_id = run_id or datetime.now(UTC).strftime("RUN-%Y%m%dT%H%M%S%fZ")
     checkpoint_store = checkpoints if checkpoints is not None else {}
@@ -121,13 +124,19 @@ def run_miner(
     active = list(adapters)
     sequence = 0
 
-    while active and inspected < budget:
+    while active and inspected < budget and (max_exports is None or exported < max_exports):
         next_active: list[SourceAdapter] = []
         for adapter in active:
             if inspected >= budget:
                 break
 
+            remaining_exports = None if max_exports is None else max_exports - exported
+            if remaining_exports == 0:
+                break
             request_limit = min(chunk_size, budget - inspected)
+            if remaining_exports is not None:
+                request_limit = min(request_limit, remaining_exports)
+
             current_checkpoint = checkpoint_store[adapter.name]
             batch = adapter.fetch(current_checkpoint, request_limit)
             adapter_errors += batch.error_count
