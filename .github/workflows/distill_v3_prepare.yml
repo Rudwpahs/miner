@@ -46,3 +46,13 @@ jobs:
           else
             python scripts/run_distill_v3_prepare.py --repo Rudwpahs/hoopDB --branch main --run-date "$RUN_DATE" --dry-run
           fi
+
+  refresh-dashboard:
+    needs: prepare-shadow
+    if: needs.prepare-shadow.result == 'success'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/dashboard.yml
+    secrets: inherit

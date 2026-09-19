@@ -113,3 +113,13 @@ jobs:
           fi
           git commit -m "state: advance miner checkpoints"
           git push origin HEAD:miner-state
+
+  refresh-dashboard:
+    needs: persist-state
+    if: needs.persist-state.result == 'success'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/dashboard.yml
+    secrets: inherit
