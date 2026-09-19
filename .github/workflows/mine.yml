@@ -1,6 +1,8 @@
 name: Basketball Knowledge Miner
 
 on:
+  push:
+    branches: [main]
   schedule:
     - cron: "7,27,47 * * * *"
   workflow_dispatch:
@@ -63,7 +65,7 @@ jobs:
             python scripts/run_miner.py --budget 20000 --state-dir _state_current --next-state-dir _state_next
           fi
       - name: Upload next safe state
-        if: github.event_name == 'schedule' || inputs.export == true
+        if: github.event_name == 'schedule' || github.event_name == 'push' || inputs.export == true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: miner-next-state
@@ -73,7 +75,7 @@ jobs:
 
   persist-state:
     needs: mine
-    if: github.event_name == 'schedule' || inputs.export == true
+    if: github.event_name == 'schedule' || github.event_name == 'push' || inputs.export == true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
