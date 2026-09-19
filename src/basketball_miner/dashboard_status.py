@@ -40,7 +40,7 @@ class PublicStatus(BaseModel):
         if value is None:
             return None
         try:
-            datetime.fromisoformat(value.replace("Z", "+00:00"))
+            datetime.fromisoformat(value)
         except ValueError as exc:
             raise ValueError("timestamp must be ISO-8601") from exc
         return value
@@ -60,7 +60,7 @@ def parse_concept_index(content: bytes) -> list[ConceptIndexRecord]:
         except json.JSONDecodeError as exc:
             raise ValueError("concept index contains invalid JSON") from exc
         if not isinstance(payload, dict):
-            raise ValueError("concept index rows must be objects")
+            raise TypeError("concept index rows must be objects")
         rows.append(ConceptIndexRecord.model_validate(payload))
     return rows
 
@@ -163,12 +163,12 @@ def _last_distillation_success_at(store) -> str | None:
                     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                         raise ValueError(f"invalid V3 run record: {entry.path}") from exc
                     if not isinstance(payload, dict):
-                        raise ValueError(f"invalid V3 run record: {entry.path}")
+                        raise TypeError(f"invalid V3 run record: {entry.path}")
                     if payload.get("stage") != "AUDIT" or payload.get("status") != "COMPLETED":
                         continue
                     counts = payload.get("decision_counts")
                     if not isinstance(counts, dict):
-                        raise ValueError(f"AUDIT run missing decision_counts: {entry.path}")
+                        raise TypeError(f"AUDIT run missing decision_counts: {entry.path}")
                     promoted = sum(
                         int(counts.get(action, 0))
                         for action in ("CREATE", "SUPPORT", "REFINE", "CONTRADICT")
@@ -177,9 +177,9 @@ def _last_distillation_success_at(store) -> str | None:
                         continue
                     created_at = payload.get("created_at")
                     if not isinstance(created_at, str):
-                        raise ValueError(f"AUDIT run missing created_at: {entry.path}")
+                        raise TypeError(f"AUDIT run missing created_at: {entry.path}")
                     try:
-                        datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                        datetime.fromisoformat(created_at)
                     except ValueError as exc:
                         raise ValueError(f"AUDIT run has invalid created_at: {entry.path}") from exc
                     successes.append(created_at)
