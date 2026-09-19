@@ -14,6 +14,7 @@ from basketball_miner.collection_stats import (
     bootstrap_collection_stats,
     load_collection_stats,
     load_target_config,
+    reconcile_collection_stats,
     remaining_target,
 )
 from basketball_miner.distill_v3.github_store import GitHubV3Store
@@ -149,13 +150,23 @@ def main() -> int:
 
     config = load_target_config(args.target_config)
     now = datetime.now(ZoneInfo(config.timezone))
+    store = GitHubV3Store(target_repo, target_branch, token)
     collection_path = args.state_dir / "collection_stats.json"
     if collection_path.exists():
         collection_stats = load_collection_stats(collection_path, now)
+        collection_stats = reconcile_collection_stats(
+            store,
+            collection_stats,
+            now,
+            seen_hashes=seen_hashes,
+            seen_crossref_dois=seen_crossref_dois,
+        )
     else:
         collection_stats = bootstrap_collection_stats(
-            GitHubV3Store(target_repo, target_branch, token),
+            store,
             now,
+            seen_hashes=seen_hashes,
+            seen_crossref_dois=seen_crossref_dois,
         )
 
     remaining = remaining_target(config, collection_stats)
@@ -186,7 +197,8 @@ def main() -> int:
         identity_verifier=CrossrefIdentityVerifier(),
         max_exports=remaining,
     )
-    collection_stats = apply_export(collection_stats, counters.exported, now)
+    finished_at = datetime.now(ZoneInfo(config.timezone))
+    collection_stats = apply_export(collection_stats, counters.exported, finished_at)
     _save_state(
         args.next_state_dir,
         checkpoints,
