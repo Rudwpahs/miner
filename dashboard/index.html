@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Miner Live</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">HOOPHUB KNOWLEDGE PIPELINE</p>
+        <h1>Miner Live</h1>
+        <p class="subtitle">수집부터 증류까지, 현재 상태를 숫자로만 보여줍니다.</p>
+      </div>
+      <div class="status-wrap" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <strong id="system-status">LOADING</strong>
+      </div>
+    </header>
+
+    <section class="metric-grid" aria-label="핵심 지표">
+      <article class="metric-card">
+        <span>수집 데이터</span>
+        <strong id="collected-total">—</strong>
+        <small>누적 고유 후보</small>
+      </article>
+      <article class="metric-card">
+        <span>증류 대기</span>
+        <strong id="distillation-pending">—</strong>
+        <small>추가 의미 판단 필요</small>
+      </article>
+      <article class="metric-card">
+        <span>증류 성공</span>
+        <strong id="distillation-success">—</strong>
+        <small>승인된 지식 단위</small>
+      </article>
+    </section>
+
+    <section class="panel progress-panel" aria-labelledby="today-heading">
+      <div class="section-head">
+        <div>
+          <p class="section-kicker">TODAY</p>
+          <h2 id="today-heading">오늘 수집량</h2>
+        </div>
+        <strong id="today-progress-label">—</strong>
+      </div>
+      <progress id="today-progress" value="0" max="1">0%</progress>
+      <p class="muted" id="target-note">일일 목표 기준 진행률</p>
+    </section>
+
+    <section class="panel" aria-labelledby="history-heading">
+      <div class="section-head">
+        <div>
+          <p class="section-kicker">7 DAYS</p>
+          <h2 id="history-heading">최근 수집량</h2>
+        </div>
+      </div>
+      <div id="history-chart" class="history-chart" aria-label="최근 7일 수집량"></div>
+    </section>
+
+    <section class="panel timestamps" aria-label="갱신 정보">
+      <div>
+        <span>마지막 Miner 실행</span>
+        <time id="last-miner-run">—</time>
+      </div>
+      <div>
+        <span>마지막 증류 성공</span>
+        <time id="last-distillation-success">—</time>
+      </div>
+      <div>
+        <span>현황 생성</span>
+        <time id="generated-at">—</time>
+      </div>
+    </section>
+
+    <footer>
+      <span>Aggregate metrics only · candidate-level data stays private</span>
+    </footer>
+  </main>
+  <script src="app.js" defer></script>
+</body>
+</html>

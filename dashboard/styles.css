@@ -1,0 +1,258 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #edf2f7;
+  background: #080b10;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(49, 130, 206, .18), transparent 34rem),
+    #080b10;
+}
+
+.shell {
+  width: min(1120px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 48px 0 32px;
+}
+
+.hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+}
+
+.eyebrow,
+.section-kicker {
+  margin: 0 0 8px;
+  font-size: .72rem;
+  letter-spacing: .16em;
+  font-weight: 700;
+  color: #8da2b8;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2.35rem, 7vw, 4.75rem);
+  line-height: .95;
+  letter-spacing: -.055em;
+}
+
+.subtitle {
+  margin: 14px 0 0;
+  color: #9eacba;
+}
+
+.status-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 14px;
+  border: 1px solid #26313c;
+  border-radius: 999px;
+  background: rgba(12, 18, 25, .78);
+  font-size: .76rem;
+  letter-spacing: .08em;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6ee7b7;
+  box-shadow: 0 0 16px rgba(110, 231, 183, .55);
+}
+
+.status-wrap[data-state="STALE"] .status-dot,
+.status-wrap[data-state="BLOCKED"] .status-dot,
+.status-wrap[data-state="DEGRADED"] .status-dot {
+  background: #f59e0b;
+  box-shadow: 0 0 16px rgba(245, 158, 11, .5);
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.metric-card,
+.panel {
+  border: 1px solid #1f2a35;
+  border-radius: 22px;
+  background: rgba(13, 18, 25, .82);
+  box-shadow: 0 14px 50px rgba(0, 0, 0, .16);
+}
+
+.metric-card {
+  min-height: 188px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.metric-card > span {
+  color: #aab6c2;
+  font-weight: 650;
+}
+
+.metric-card strong {
+  margin: auto 0 8px;
+  font-size: clamp(2.6rem, 7vw, 4.2rem);
+  line-height: .9;
+  letter-spacing: -.055em;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-card small,
+.muted {
+  color: #728293;
+}
+
+.panel {
+  margin-top: 14px;
+  padding: 24px;
+}
+
+.section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+#today-progress-label {
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
+}
+
+progress {
+  width: 100%;
+  height: 12px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: #141c25;
+}
+
+progress::-webkit-progress-bar { background: #141c25; }
+progress::-webkit-progress-value { background: linear-gradient(90deg, #60a5fa, #6ee7b7); }
+progress::-moz-progress-bar { background: linear-gradient(90deg, #60a5fa, #6ee7b7); }
+
+.history-chart {
+  min-height: 210px;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.history-item {
+  height: 190px;
+  display: grid;
+  grid-template-rows: 24px 1fr 22px;
+  gap: 6px;
+  text-align: center;
+  font-size: .76rem;
+  color: #91a0ae;
+}
+
+.history-item strong {
+  color: #d8e0e7;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-rail {
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  border-radius: 9px;
+  background: #111820;
+}
+
+.history-bar {
+  width: 100%;
+  min-height: 4px;
+  border-radius: 9px 9px 3px 3px;
+  background: linear-gradient(180deg, #60a5fa, #2563eb);
+}
+
+.timestamps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.timestamps div {
+  display: grid;
+  gap: 7px;
+}
+
+.timestamps span {
+  color: #718194;
+  font-size: .78rem;
+}
+
+.timestamps time {
+  font-variant-numeric: tabular-nums;
+  font-size: .9rem;
+}
+
+footer {
+  padding: 22px 4px 0;
+  color: #536272;
+  font-size: .72rem;
+}
+
+@media (max-width: 720px) {
+  .shell {
+    width: min(100% - 20px, 680px);
+    padding-top: 28px;
+  }
+
+  .hero {
+    flex-direction: column;
+  }
+
+  .metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-card {
+    min-height: 142px;
+  }
+
+  .timestamps {
+    grid-template-columns: 1fr;
+  }
+
+  .history-chart {
+    gap: 6px;
+  }
+
+  .history-item {
+    font-size: .66rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}
