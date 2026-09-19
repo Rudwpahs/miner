@@ -7,8 +7,14 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from basketball_miner.collection_stats import load_collection_stats, load_target_config
-from basketball_miner.dashboard_status import build_status_from_store, validate_public_payload
+from basketball_miner.dashboard_status import (
+    PublicStatus,
+    build_status_from_store,
+    validate_public_payload,
+)
 from basketball_miner.distill_v3.github_store import GitHubV3Store
+
+__all__ = ["PublicStatus"]
 
 ROOT = Path(__file__).parents[1]
 DEFAULT_TARGET_CONFIG = ROOT / "config" / "miner_target.json"
