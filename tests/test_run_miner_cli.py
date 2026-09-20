@@ -1,9 +1,13 @@
 import importlib.util
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from basketball_miner.models import RunCounters
+
+KST = ZoneInfo("Asia/Seoul")
 
 
 def load_script():
@@ -16,6 +20,7 @@ def load_script():
 
 def write_state(root: Path, today: int, total: int = 200) -> None:
     root.mkdir(parents=True)
+    current_date = datetime.now(KST).date().isoformat()
     (root / "crossref.json").write_text('{"adapter":"crossref"}\n', encoding="utf-8")
     (root / "youtube_rss.json").write_text('{"adapter":"youtube_rss"}\n', encoding="utf-8")
     (root / "seen_hashes.jsonl").write_text("", encoding="utf-8")
@@ -24,10 +29,10 @@ def write_state(root: Path, today: int, total: int = 200) -> None:
         json.dumps(
             {
                 "schema_version": 1,
-                "date": "2026-09-19",
+                "date": current_date,
                 "today_collected": today,
                 "collected_total": total,
-                "daily_counts": {"2026-09-19": today},
+                "daily_counts": {current_date: today},
                 "last_miner_run_at": None,
             }
         ),
