@@ -103,6 +103,32 @@ def test_target_reached_precedes_distilling_status():
     assert status.system_status == "TARGET_REACHED"
 
 
+def test_dashboard_uses_burst_target_while_burst_is_active():
+    config = MinerTargetConfig(
+        daily_target=1659,
+        timezone="Asia/Seoul",
+        burst_daily_target=100000,
+        burst_end_date_exclusive="2026-09-24",
+    )
+    stats = base_stats().model_copy(
+        update={
+            "date": "2026-09-23",
+            "today_collected": 2000,
+            "daily_counts": {"2026-09-23": 2000},
+        }
+    )
+    status = build_public_status(
+        config,
+        stats,
+        DistillLedger(),
+        [],
+        generated_at="2026-09-23T18:01:00+09:00",
+        last_success_at=None,
+    )
+    assert status.daily_target == 100000
+    assert status.system_status == "COLLECTING"
+
+
 def test_unknown_public_key_is_rejected():
     payload = build_public_status(
         base_config(),
