@@ -108,6 +108,7 @@ def test_dashboard_uses_burst_target_while_burst_is_active():
         daily_target=1659,
         timezone="Asia/Seoul",
         burst_daily_target=100000,
+        burst_start_date="2026-09-21",
         burst_end_date_exclusive="2026-09-24",
     )
     stats = base_stats().model_copy(
