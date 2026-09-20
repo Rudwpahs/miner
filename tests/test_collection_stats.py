@@ -31,11 +31,12 @@ def test_target_config_rejects_non_positive_target(tmp_path: Path):
         load_target_config(path)
 
 
-def test_burst_target_applies_before_end_date(tmp_path: Path):
+def test_burst_target_applies_inside_window(tmp_path: Path):
     path = tmp_path / "miner_target.json"
     path.write_text(
         '{"daily_target":1659,"timezone":"Asia/Seoul",'
-        '"burst_daily_target":100000,"burst_end_date_exclusive":"2026-09-24"}',
+        '"burst_daily_target":100000,"burst_start_date":"2026-09-21",'
+        '"burst_end_date_exclusive":"2026-09-24"}',
         encoding="utf-8",
     )
     config = load_target_config(path)
@@ -49,11 +50,31 @@ def test_burst_target_applies_before_end_date(tmp_path: Path):
     assert remaining_target(config, stats) == 98000
 
 
+def test_burst_target_is_not_applied_before_start_date(tmp_path: Path):
+    path = tmp_path / "miner_target.json"
+    path.write_text(
+        '{"daily_target":1659,"timezone":"Asia/Seoul",'
+        '"burst_daily_target":100000,"burst_start_date":"2026-09-21",'
+        '"burst_end_date_exclusive":"2026-09-24"}',
+        encoding="utf-8",
+    )
+    config = load_target_config(path)
+    stats = CollectionStats(
+        date="2026-09-19",
+        today_collected=1700,
+        collected_total=3000,
+        daily_counts={"2026-09-19": 1700},
+    )
+    assert effective_daily_target(config, stats) == 1659
+    assert remaining_target(config, stats) == 0
+
+
 def test_burst_target_expires_on_end_date(tmp_path: Path):
     path = tmp_path / "miner_target.json"
     path.write_text(
         '{"daily_target":1659,"timezone":"Asia/Seoul",'
-        '"burst_daily_target":100000,"burst_end_date_exclusive":"2026-09-24"}',
+        '"burst_daily_target":100000,"burst_start_date":"2026-09-21",'
+        '"burst_end_date_exclusive":"2026-09-24"}',
         encoding="utf-8",
     )
     config = load_target_config(path)
@@ -67,10 +88,11 @@ def test_burst_target_expires_on_end_date(tmp_path: Path):
     assert remaining_target(config, stats) == 59
 
 
-def test_burst_config_requires_target_and_end_date_together(tmp_path: Path):
+def test_burst_config_requires_target_start_and_end_together(tmp_path: Path):
     path = tmp_path / "miner_target.json"
     path.write_text(
-        '{"daily_target":1659,"timezone":"Asia/Seoul","burst_daily_target":100000}',
+        '{"daily_target":1659,"timezone":"Asia/Seoul",'
+        '"burst_daily_target":100000,"burst_end_date_exclusive":"2026-09-24"}',
         encoding="utf-8",
     )
     with pytest.raises(ValueError):
