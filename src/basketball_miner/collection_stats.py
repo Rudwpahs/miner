@@ -22,14 +22,28 @@ class MinerTargetConfig(BaseModel):
     daily_target: int = Field(gt=0, le=100_000)
     timezone: Literal["Asia/Seoul"] = "Asia/Seoul"
     burst_daily_target: int | None = Field(default=None, gt=0, le=100_000)
+    burst_start_date: date | None = None
     burst_end_date_exclusive: date | None = None
 
     @model_validator(mode="after")
     def validate_burst_window(self) -> MinerTargetConfig:
-        has_target = self.burst_daily_target is not None
-        has_end = self.burst_end_date_exclusive is not None
-        if has_target != has_end:
-            raise ValueError("burst_daily_target and burst_end_date_exclusive must be set together")
+        values = (
+            self.burst_daily_target,
+            self.burst_start_date,
+            self.burst_end_date_exclusive,
+        )
+        configured = [value is not None for value in values]
+        if any(configured) and not all(configured):
+            raise ValueError(
+                "burst_daily_target, burst_start_date, and burst_end_date_exclusive "
+                "must be set together"
+            )
+        if (
+            self.burst_start_date is not None
+            and self.burst_end_date_exclusive is not None
+            and self.burst_start_date >= self.burst_end_date_exclusive
+        ):
+            raise ValueError("burst_start_date must be before burst_end_date_exclusive")
         return self
 
 
@@ -131,10 +145,14 @@ def load_collection_stats(path: Path, now: datetime) -> CollectionStats:
 
 
 def effective_daily_target(config: MinerTargetConfig, stats: CollectionStats) -> int:
-    if config.burst_daily_target is None or config.burst_end_date_exclusive is None:
+    if (
+        config.burst_daily_target is None
+        or config.burst_start_date is None
+        or config.burst_end_date_exclusive is None
+    ):
         return config.daily_target
     stats_date = date.fromisoformat(stats.date)
-    if stats_date < config.burst_end_date_exclusive:
+    if config.burst_start_date <= stats_date < config.burst_end_date_exclusive:
         return config.burst_daily_target
     return config.daily_target
 
