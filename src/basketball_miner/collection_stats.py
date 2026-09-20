@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from basketball_miner.models import SourceRecord
 from basketball_miner.normalize import fingerprint
@@ -21,6 +21,16 @@ class MinerTargetConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     daily_target: int = Field(gt=0, le=100_000)
     timezone: Literal["Asia/Seoul"] = "Asia/Seoul"
+    burst_daily_target: int | None = Field(default=None, gt=0, le=100_000)
+    burst_end_date_exclusive: date | None = None
+
+    @model_validator(mode="after")
+    def validate_burst_window(self) -> MinerTargetConfig:
+        has_target = self.burst_daily_target is not None
+        has_end = self.burst_end_date_exclusive is not None
+        if has_target != has_end:
+            raise ValueError("burst_daily_target and burst_end_date_exclusive must be set together")
+        return self
 
 
 class CollectionStats(BaseModel):
@@ -120,8 +130,17 @@ def load_collection_stats(path: Path, now: datetime) -> CollectionStats:
     return stats.model_copy(update={"daily_counts": _pruned_counts(stats.daily_counts)})
 
 
+def effective_daily_target(config: MinerTargetConfig, stats: CollectionStats) -> int:
+    if config.burst_daily_target is None or config.burst_end_date_exclusive is None:
+        return config.daily_target
+    stats_date = date.fromisoformat(stats.date)
+    if stats_date < config.burst_end_date_exclusive:
+        return config.burst_daily_target
+    return config.daily_target
+
+
 def remaining_target(config: MinerTargetConfig, stats: CollectionStats) -> int:
-    return max(0, config.daily_target - stats.today_collected)
+    return max(0, effective_daily_target(config, stats) - stats.today_collected)
 
 
 def apply_export(stats: CollectionStats, exported: int, run_at: datetime) -> CollectionStats:
@@ -280,8 +299,8 @@ def reconcile_collection_stats(
                 )
 
     daily_counts = dict(current.daily_counts)
-    for date, count in recovered_by_day.items():
-        daily_counts[date] = daily_counts.get(date, 0) + count
+    for count_date, count in recovered_by_day.items():
+        daily_counts[count_date] = daily_counts.get(count_date, 0) + count
     recovered_total = len(seen_candidates)
     return current.model_copy(
         update={
