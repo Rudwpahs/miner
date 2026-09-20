@@ -7,6 +7,7 @@ import pytest
 from basketball_miner.collection_stats import (
     CollectionStats,
     apply_export,
+    effective_daily_target,
     load_collection_stats,
     load_target_config,
     remaining_target,
@@ -26,6 +27,52 @@ def test_target_config_loads_operator_value(tmp_path: Path):
 def test_target_config_rejects_non_positive_target(tmp_path: Path):
     path = tmp_path / "miner_target.json"
     path.write_text('{"daily_target":0,"timezone":"Asia/Seoul"}', encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_target_config(path)
+
+
+def test_burst_target_applies_before_end_date(tmp_path: Path):
+    path = tmp_path / "miner_target.json"
+    path.write_text(
+        '{"daily_target":1659,"timezone":"Asia/Seoul",'
+        '"burst_daily_target":100000,"burst_end_date_exclusive":"2026-09-24"}',
+        encoding="utf-8",
+    )
+    config = load_target_config(path)
+    stats = CollectionStats(
+        date="2026-09-23",
+        today_collected=2000,
+        collected_total=5000,
+        daily_counts={"2026-09-23": 2000},
+    )
+    assert effective_daily_target(config, stats) == 100000
+    assert remaining_target(config, stats) == 98000
+
+
+def test_burst_target_expires_on_end_date(tmp_path: Path):
+    path = tmp_path / "miner_target.json"
+    path.write_text(
+        '{"daily_target":1659,"timezone":"Asia/Seoul",'
+        '"burst_daily_target":100000,"burst_end_date_exclusive":"2026-09-24"}',
+        encoding="utf-8",
+    )
+    config = load_target_config(path)
+    stats = CollectionStats(
+        date="2026-09-24",
+        today_collected=1600,
+        collected_total=7000,
+        daily_counts={"2026-09-24": 1600},
+    )
+    assert effective_daily_target(config, stats) == 1659
+    assert remaining_target(config, stats) == 59
+
+
+def test_burst_config_requires_target_and_end_date_together(tmp_path: Path):
+    path = tmp_path / "miner_target.json"
+    path.write_text(
+        '{"daily_target":1659,"timezone":"Asia/Seoul","burst_daily_target":100000}',
+        encoding="utf-8",
+    )
     with pytest.raises(ValueError):
         load_target_config(path)
 
