@@ -6,7 +6,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from basketball_miner.collection_stats import CollectionStats, MinerTargetConfig
+from basketball_miner.collection_stats import (
+    CollectionStats,
+    MinerTargetConfig,
+    effective_daily_target,
+)
 from basketball_miner.distill_v3.concept_index import ConceptIndexRecord
 from basketball_miner.distill_v3.ledger import DistillLedger
 
@@ -83,8 +87,9 @@ def build_public_status(
     accepted_ku_ids = {
         row.knowledge_unit_id for row in concept_rows if row.status == "ACCEPTED"
     }
+    active_target = effective_daily_target(config, collection_stats)
 
-    if collection_stats.today_collected >= config.daily_target:
+    if collection_stats.today_collected >= active_target:
         system_status = "TARGET_REACHED"
     elif pending_ids:
         system_status = "DISTILLING"
@@ -99,7 +104,7 @@ def build_public_status(
     status = PublicStatus(
         generated_at=generated_at,
         timezone=config.timezone,
-        daily_target=config.daily_target,
+        daily_target=active_target,
         collected_total=collection_stats.collected_total,
         distillation_pending=len(pending_ids),
         distillation_success=len(accepted_ku_ids),
