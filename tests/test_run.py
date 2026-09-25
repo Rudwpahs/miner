@@ -39,6 +39,28 @@ class FakeAdapter:
         )
 
 
+class ShortParsedPageAdapter:
+    name = "short-page"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def fetch(self, checkpoint: Checkpoint, limit: int) -> AdapterBatch:
+        self.calls += 1
+        if self.calls == 1:
+            return AdapterBatch(
+                records=[make_source(i, adapter=self.name) for i in range(44)],
+                next_checkpoint=Checkpoint(adapter=self.name, cursor="page-2"),
+                error_count=6,
+                has_more=True,
+            )
+        return AdapterBatch(
+            records=[make_source(i, adapter=self.name) for i in range(44, 50)],
+            next_checkpoint=Checkpoint(adapter=self.name, cursor="done"),
+            has_more=False,
+        )
+
+
 class FakeSink:
     def __init__(self, fail: bool = False) -> None:
         self.fail = fail
@@ -80,6 +102,35 @@ def test_run_rejects_budget_above_40x_ceiling():
         assert "between 1 and 20000" in str(exc)
     else:
         raise AssertionError("budget above 20,000 must be rejected")
+
+
+def test_run_continues_after_short_parsed_page_when_adapter_has_more():
+    adapter = ShortParsedPageAdapter()
+    sink = FakeSink()
+
+    counters = run_miner([adapter], sink, budget=20_000)
+
+    assert adapter.calls == 2
+    assert counters.inspected == 50
+    assert counters.exported == 50
+    assert counters.adapter_errors == 6
+
+
+def test_run_without_budget_collects_until_max_exports():
+    adapter = FakeAdapter("fake", [make_source(i) for i in range(100)])
+    sink = FakeSink()
+
+    counters = run_miner(
+        [adapter],
+        sink,
+        budget=None,
+        chunk_size=50,
+        max_exports=75,
+    )
+
+    assert counters.exported == 75
+    assert counters.inspected == 75
+    assert adapter.calls == 2
 
 
 def test_run_allocates_budget_across_adapters():
