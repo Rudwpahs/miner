@@ -114,12 +114,27 @@ class GitHubV3Store:
             raise RuntimeError("private file read returned invalid metadata") from exc
         if not isinstance(payload, dict) or payload.get("type") != "file":
             raise RuntimeError("private path is not a file")
-        if payload.get("encoding") != "base64" or not isinstance(payload.get("content"), str):
+
+        encoding = payload.get("encoding")
+        if encoding == "base64" and isinstance(payload.get("content"), str):
+            try:
+                content = base64.b64decode(payload["content"], validate=False)
+            except ValueError as exc:
+                raise RuntimeError("private file read returned invalid base64") from exc
+        elif encoding == "none":
+            raw_headers = self._headers()
+            raw_headers["Accept"] = "application/vnd.github.raw+json"
+            raw_response = self.client.get(
+                self._endpoint(path),
+                headers=raw_headers,
+                params={"ref": self.branch},
+            )
+            if not 200 <= raw_response.status_code < 300:
+                self._raise_status("private raw file read", raw_response.status_code)
+            content = raw_response.content
+        else:
             raise RuntimeError("private file read returned unsupported encoding")
-        try:
-            content = base64.b64decode(payload["content"], validate=False)
-        except ValueError as exc:
-            raise RuntimeError("private file read returned invalid base64") from exc
+
         return RemoteFile(
             path=str(payload.get("path", path)),
             sha=str(payload.get("sha", "")),
