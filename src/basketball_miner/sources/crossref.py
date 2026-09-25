@@ -55,6 +55,8 @@ class CrossrefAdapter:
                     next_checkpoint=checkpoint,
                     rate_limited=True,
                     retry_after=response.headers.get("Retry-After"),
+                    has_more=True,
+                    raw_count=0,
                 )
             if response.status_code < 500:
                 break
@@ -95,6 +97,8 @@ class CrossrefAdapter:
             records=records,
             next_checkpoint=next_checkpoint,
             error_count=errors,
+            has_more=bool(raw_items) and bool(next_cursor),
+            raw_count=len(raw_items),
         )
 
     @staticmethod
