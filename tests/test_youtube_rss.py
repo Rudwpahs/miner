@@ -4,7 +4,11 @@ from pathlib import Path
 import httpx
 
 from basketball_miner.models import Checkpoint
-from basketball_miner.sources.youtube_rss import YouTubeRssAdapter, load_channel_ids
+from basketball_miner.sources.youtube_rss import (
+    YouTubeRssAdapter,
+    load_channel_ids,
+    load_legacy_users,
+)
 
 CONFIG = Path(__file__).parents[1] / "config" / "youtube_channels.json"
 FIXTURE = Path(__file__).parent / "fixtures" / "youtube_feed.xml"
@@ -19,6 +23,10 @@ def test_load_channel_ids_reads_only_allowlisted_ids():
         "UCDP7U_0S1zP3AiNqCO6ejuQ",
         "UC0EVRyv6lA6xs-QtFsKqexg",
     )
+
+
+def test_load_legacy_users_reads_the_hoop_doctors():
+    assert load_legacy_users(CONFIG) == ("TheHoopDoctors",)
 
 
 def test_youtube_rss_supports_legacy_user_allowlist_entry():
