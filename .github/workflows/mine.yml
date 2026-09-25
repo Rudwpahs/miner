@@ -62,7 +62,7 @@ jobs:
           if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$MANUAL_EXPORT" != "true" ]; then
             python scripts/run_miner.py --budget 20000 --state-dir _state_current --no-export
           else
-            python scripts/run_miner.py --budget 20000 --state-dir _state_current --next-state-dir _state_next
+            python scripts/run_miner.py --until-target --state-dir _state_current --next-state-dir _state_next
           fi
       - name: Upload next safe state
         if: github.event_name == 'schedule' || github.event_name == 'push' || inputs.export == true
