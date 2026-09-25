@@ -65,6 +65,36 @@ def test_read_file_decodes_base64_and_404_is_none():
     assert remote.sha == "a" * 40
 
 
+def test_read_file_fetches_raw_bytes_when_contents_api_uses_encoding_none():
+    content = b'{"large":true}\n'
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        accept = request.headers.get("Accept", "")
+        if "raw" in accept:
+            return httpx.Response(200, content=content)
+        return httpx.Response(
+            200,
+            json={
+                "name": "distill.json",
+                "path": "ml/coach/miner-data/v3/ledgers/distill.json",
+                "sha": "d" * 40,
+                "type": "file",
+                "encoding": "none",
+                "content": "",
+            },
+        )
+
+    remote = make_store(handler).read_file("ml/coach/miner-data/v3/ledgers/distill.json")
+
+    assert remote is not None
+    assert remote.content == content
+    assert remote.sha == "d" * 40
+    assert len(requests) == 2
+    assert "raw" in requests[1].headers["Accept"]
+
+
 def test_read_file_rejects_directory_payload():
     store = make_store(lambda request: httpx.Response(200, json={"type": "dir"}))
     with pytest.raises(RuntimeError, match="not a file"):
