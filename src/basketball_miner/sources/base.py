@@ -13,6 +13,8 @@ class AdapterBatch:
     rate_limited: bool = False
     error_count: int = 0
     retry_after: str | None = None
+    has_more: bool | None = None
+    raw_count: int | None = None
 
 
 class SourceAdapter(Protocol):
