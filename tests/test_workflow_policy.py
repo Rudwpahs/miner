@@ -42,9 +42,10 @@ def test_miner_runs_every_twenty_minutes_without_pr_trigger():
     assert "contents: write" in text
 
 
-def test_miner_uses_40x_inspection_budget_with_quota_frequency():
+def test_scheduled_miner_collects_until_daily_target_and_manual_dry_run_stays_bounded():
     text = _workflow_text(MINE_WORKFLOW)
-    assert text.count("--budget 20000") == 2
+    assert text.count("--until-target") == 1
+    assert text.count("--budget 20000") == 1
     assert "--budget 500" not in text
     assert 'cron: "7,27,47 * * * *"' in text
     assert "collection_stats.json" in text
