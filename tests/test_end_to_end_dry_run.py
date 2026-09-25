@@ -54,12 +54,19 @@ def _run_fixture_pipeline() -> tuple[object, list[CandidateRecord]]:
         (FIXTURES / "crossref.json").read_text(encoding="utf-8")
     )
     youtube_xml = (FIXTURES / "youtube_feed.xml").read_text(encoding="utf-8")
+    crossref_calls = 0
 
-    crossref_client = httpx.Client(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(200, json=crossref_payload)
+    def crossref_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal crossref_calls
+        crossref_calls += 1
+        if crossref_calls == 1:
+            return httpx.Response(200, json=crossref_payload)
+        return httpx.Response(
+            200,
+            json={"message": {"items": [], "next-cursor": None}},
         )
-    )
+
+    crossref_client = httpx.Client(transport=httpx.MockTransport(crossref_handler))
     identity_client = httpx.Client(transport=httpx.MockTransport(_exact_crossref_response))
     youtube_client = httpx.Client(
         transport=httpx.MockTransport(

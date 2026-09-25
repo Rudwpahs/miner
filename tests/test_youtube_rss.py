@@ -4,7 +4,11 @@ from pathlib import Path
 import httpx
 
 from basketball_miner.models import Checkpoint
-from basketball_miner.sources.youtube_rss import YouTubeRssAdapter, load_channel_ids
+from basketball_miner.sources.youtube_rss import (
+    YouTubeRssAdapter,
+    load_channel_ids,
+    load_legacy_users,
+)
 
 CONFIG = Path(__file__).parents[1] / "config" / "youtube_channels.json"
 FIXTURE = Path(__file__).parent / "fixtures" / "youtube_feed.xml"
@@ -15,7 +19,34 @@ def test_load_channel_ids_reads_only_allowlisted_ids():
     assert channel_ids == (
         "UCBo3XgAVBeE74Zw0T77aDhw",
         "UCtInrnU3QbWqFGsdKT1GZtg",
+        "UC9vie9VZdTqsxu4_H8asuPw",
+        "UCDP7U_0S1zP3AiNqCO6ejuQ",
+        "UC0EVRyv6lA6xs-QtFsKqexg",
     )
+
+
+def test_load_legacy_users_reads_the_hoop_doctors():
+    assert load_legacy_users(CONFIG) == ("TheHoopDoctors",)
+
+
+def test_youtube_rss_supports_legacy_user_allowlist_entry():
+    xml = FIXTURE.read_text(encoding="utf-8")
+    requested: list[dict[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(dict(request.url.params))
+        return httpx.Response(200, text=xml)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    adapter = YouTubeRssAdapter(
+        channel_ids=(),
+        legacy_users=("TheHoopDoctors",),
+        client=client,
+    )
+    batch = adapter.fetch(Checkpoint(adapter="youtube_rss"), limit=10)
+
+    assert requested == [{"user": "TheHoopDoctors"}]
+    assert [record.stable_id for record in batch.records] == ["coach123", "interview456"]
 
 
 def test_youtube_rss_maps_coaching_and_interview_without_transcript():

@@ -81,7 +81,7 @@ def _identity_signature(source: SourceRecord) -> str:
 def run_miner(
     adapters: list[SourceAdapter],
     sink: CandidateSink,
-    budget: int = 500,
+    budget: int | None = 500,
     *,
     checkpoints: dict[str, Checkpoint] | None = None,
     seen_hashes: set[str] | None = None,
@@ -91,7 +91,7 @@ def run_miner(
     identity_verifier: SourceIdentityVerifier | None = None,
     max_exports: int | None = None,
 ) -> RunCounters:
-    if not 1 <= budget <= MAX_BUDGET:
+    if budget is not None and not 1 <= budget <= MAX_BUDGET:
         raise ValueError(f"budget must be between 1 and {MAX_BUDGET}")
     if chunk_size < 1:
         raise ValueError("chunk_size must be >= 1")
@@ -124,18 +124,24 @@ def run_miner(
     active = list(adapters)
     sequence = 0
 
-    while active and inspected < budget and (max_exports is None or exported < max_exports):
+    def budget_remaining() -> bool:
+        return budget is None or inspected < budget
+
+    while active and budget_remaining() and (max_exports is None or exported < max_exports):
         next_active: list[SourceAdapter] = []
         for adapter in active:
-            if inspected >= budget:
+            if not budget_remaining():
                 break
 
             remaining_exports = None if max_exports is None else max_exports - exported
             if remaining_exports == 0:
                 break
-            request_limit = min(chunk_size, budget - inspected)
+
+            request_limit = chunk_size if budget is None else min(chunk_size, budget - inspected)
             if remaining_exports is not None:
                 request_limit = min(request_limit, remaining_exports)
+            if request_limit <= 0:
+                break
 
             current_checkpoint = checkpoint_store[adapter.name]
             batch = adapter.fetch(current_checkpoint, request_limit)
@@ -217,7 +223,12 @@ def run_miner(
             crossref_doi_store.update(pending_crossref_dois)
             checkpoint_store[adapter.name] = batch.next_checkpoint
 
-            if not batch.rate_limited and len(batch.records) >= request_limit:
+            if batch.has_more is None:
+                has_more = len(batch.records) >= request_limit
+            else:
+                has_more = batch.has_more
+            made_progress = bool(batch.records) or batch.next_checkpoint != current_checkpoint
+            if not batch.rate_limited and has_more and made_progress:
                 next_active.append(adapter)
 
         active = next_active

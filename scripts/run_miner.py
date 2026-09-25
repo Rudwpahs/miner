@@ -23,7 +23,11 @@ from basketball_miner.models import CandidateRecord, Checkpoint, RunCounters
 from basketball_miner.run import MAX_BUDGET, run_miner
 from basketball_miner.source_identity import CrossrefIdentityVerifier
 from basketball_miner.sources.crossref import CrossrefAdapter
-from basketball_miner.sources.youtube_rss import YouTubeRssAdapter, load_channel_ids
+from basketball_miner.sources.youtube_rss import (
+    YouTubeRssAdapter,
+    load_channel_ids,
+    load_legacy_users,
+)
 from basketball_miner.state import load_checkpoint, save_checkpoint
 
 ROOT = Path(__file__).parents[1]
@@ -107,13 +111,17 @@ def _load_mining_inputs(state_dir: Path):
 def _build_adapters(youtube_config: Path):
     return [
         CrossrefAdapter(),
-        YouTubeRssAdapter(load_channel_ids(youtube_config)),
+        YouTubeRssAdapter(
+            load_channel_ids(youtube_config),
+            legacy_users=load_legacy_users(youtube_config),
+        ),
     ]
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the Basketball Knowledge Miner")
     parser.add_argument("--budget", type=int, default=MAX_BUDGET)
+    parser.add_argument("--until-target", action="store_true")
     parser.add_argument("--state-dir", type=Path, default=Path("_state_current"))
     parser.add_argument("--next-state-dir", type=Path, default=Path("_state_next"))
     parser.add_argument("--youtube-config", type=Path, default=DEFAULT_CONFIG)
@@ -123,6 +131,8 @@ def main() -> int:
 
     if not 1 <= args.budget <= MAX_BUDGET:
         parser.error(f"--budget must be between 1 and {MAX_BUDGET}")
+    if args.until_target and args.no_export:
+        parser.error("--until-target requires export mode")
 
     checkpoints, seen_hashes, seen_crossref_dois = _load_mining_inputs(args.state_dir)
 
@@ -190,7 +200,8 @@ def main() -> int:
     counters = run_miner(
         _build_adapters(args.youtube_config),
         sink,
-        budget=args.budget,
+        budget=None if args.until_target else args.budget,
+        chunk_size=100 if args.until_target else 50,
         checkpoints=checkpoints,
         seen_hashes=seen_hashes,
         seen_crossref_dois=seen_crossref_dois,
