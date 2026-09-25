@@ -34,20 +34,42 @@ _INTERVIEW_TERMS = (
 )
 
 
-def load_channel_ids(path: Path) -> tuple[str, ...]:
+def _load_allowlist(path: Path) -> list[dict[str, object]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     channels = payload.get("channels") if isinstance(payload, dict) else None
     if not isinstance(channels, list):
         raise TypeError("youtube allowlist channels must be a list")
-    ids: list[str] = []
+    result: list[dict[str, object]] = []
     for item in channels:
         if not isinstance(item, dict):
             raise TypeError("youtube allowlist item must be an object")
+        has_channel_id = bool(str(item.get("channel_id", "")).strip())
+        has_user = bool(str(item.get("user", "")).strip())
+        if has_channel_id == has_user:
+            raise ValueError("youtube allowlist item must contain exactly one of channel_id or user")
+        result.append(item)
+    return result
+
+
+def load_channel_ids(path: Path) -> tuple[str, ...]:
+    ids: list[str] = []
+    for item in _load_allowlist(path):
         channel_id = str(item.get("channel_id", "")).strip()
+        if not channel_id:
+            continue
         if not channel_id.startswith("UC"):
             raise ValueError("youtube channel_id must start with UC")
         ids.append(channel_id)
     return tuple(ids)
+
+
+def load_legacy_users(path: Path) -> tuple[str, ...]:
+    users: list[str] = []
+    for item in _load_allowlist(path):
+        user = str(item.get("user", "")).strip()
+        if user:
+            users.append(user)
+    return tuple(users)
 
 
 class YouTubeRssAdapter:
@@ -58,8 +80,11 @@ class YouTubeRssAdapter:
         self,
         channel_ids: tuple[str, ...],
         client: httpx.Client | None = None,
+        *,
+        legacy_users: tuple[str, ...] = (),
     ) -> None:
         self.channel_ids = channel_ids
+        self.legacy_users = legacy_users
         self.client = client or httpx.Client(timeout=10.0, follow_redirects=True)
 
     def fetch(self, checkpoint: Checkpoint, limit: int) -> AdapterBatch:
@@ -70,10 +95,15 @@ class YouTubeRssAdapter:
 
         records: list[SourceRecord] = []
         errors = 0
-        for channel_id in self.channel_ids:
+        raw_count = 0
+        sources = [
+            ("channel_id", channel_id, channel_id) for channel_id in self.channel_ids
+        ] + [("user", user, None) for user in self.legacy_users]
+
+        for param_name, source_value, expected_channel_id in sources:
             if len(records) >= limit:
                 break
-            response = self.client.get(self.endpoint, params={"channel_id": channel_id})
+            response = self.client.get(self.endpoint, params={param_name: source_value})
             if response.status_code == 429:
                 return AdapterBatch(
                     records=records,
@@ -81,6 +111,8 @@ class YouTubeRssAdapter:
                     rate_limited=True,
                     error_count=errors,
                     retry_after=response.headers.get("Retry-After"),
+                    has_more=False,
+                    raw_count=raw_count,
                 )
             try:
                 response.raise_for_status()
@@ -93,11 +125,13 @@ class YouTubeRssAdapter:
                 errors += 1
                 continue
 
-            for entry in root.findall(f"{_ATOM}entry"):
+            entries = root.findall(f"{_ATOM}entry")
+            raw_count += len(entries)
+            for entry in entries:
                 if len(records) >= limit:
                     break
                 try:
-                    record = self._record_from_entry(entry, channel_id)
+                    record = self._record_from_entry(entry, expected_channel_id)
                 except (TypeError, ValueError):
                     errors += 1
                     continue
@@ -114,10 +148,15 @@ class YouTubeRssAdapter:
             records=records,
             next_checkpoint=next_checkpoint,
             error_count=errors,
+            has_more=False,
+            raw_count=raw_count,
         )
 
     @staticmethod
-    def _record_from_entry(entry: ET.Element, expected_channel_id: str) -> SourceRecord | None:
+    def _record_from_entry(
+        entry: ET.Element,
+        expected_channel_id: str | None,
+    ) -> SourceRecord | None:
         video_id = (entry.findtext(f"{_YT}videoId") or "").strip()
         channel_id = (entry.findtext(f"{_YT}channelId") or "").strip()
         title = (entry.findtext(f"{_ATOM}title") or "").strip()
@@ -127,8 +166,10 @@ class YouTubeRssAdapter:
         description = entry.findtext(f"{_MEDIA}group/{_MEDIA}description")
         summary = description.strip()[:1200] if description and description.strip() else None
 
-        if not video_id or not title or channel_id != expected_channel_id:
-            raise ValueError("youtube entry missing stable identity or channel mismatch")
+        if not video_id or not title:
+            raise ValueError("youtube entry missing stable identity")
+        if expected_channel_id is not None and channel_id != expected_channel_id:
+            raise ValueError("youtube entry channel mismatch")
 
         source_type = YouTubeRssAdapter._source_type(title)
         if source_type is None:
