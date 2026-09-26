@@ -26,7 +26,7 @@ jobs:
           mkdir -p _diag
           git fetch --depth=1 origin miner-state
           git show FETCH_HEAD:state/crossref.json > _diag/crossref.json
-          python scripts/diag_crossref_errors.py --state-file _diag/crossref.json --pages 5 --rows 100
+          python scripts/diag_crossref_errors.py --state-file _diag/crossref.json --pages 1 --rows 100
       - name: Test
         run: python -m pytest -q
       - name: Lint
