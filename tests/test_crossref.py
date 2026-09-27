@@ -29,6 +29,34 @@ def test_crossref_maps_valid_rows_and_skips_malformed():
     assert batch.rate_limited is False
 
 
+def test_crossref_truncates_long_abstract_instead_of_dropping_record():
+    long_text = "A" * 1500
+    payload = {
+        "message": {
+            "items": [
+                {
+                    "DOI": "10.1000/long.abstract",
+                    "title": ["Basketball shooting mechanics"],
+                    "author": [{"given": "Ada", "family": "Coach"}],
+                    "abstract": f"<jats:p>{long_text}</jats:p>",
+                    "URL": "https://doi.org/10.1000/long.abstract",
+                }
+            ],
+            "next-cursor": "next-page",
+        }
+    }
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+    )
+
+    batch = CrossrefAdapter(client=client).fetch(Checkpoint(adapter="crossref"), limit=1)
+
+    assert batch.error_count == 0
+    assert len(batch.records) == 1
+    assert batch.records[0].stable_id == "10.1000/long.abstract"
+    assert batch.records[0].summary == "A" * 1200
+
+
 def test_crossref_never_exceeds_limit():
     payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
 

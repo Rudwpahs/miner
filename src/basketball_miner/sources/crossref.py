@@ -13,6 +13,7 @@ from basketball_miner.sources.base import AdapterBatch
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
+_MAX_SUMMARY_LENGTH = 1200
 
 
 class CrossrefAdapter:
@@ -128,7 +129,9 @@ class CrossrefAdapter:
 
         published_at = CrossrefAdapter._published_date(item)
         abstract = item.get("abstract")
-        summary = CrossrefAdapter._clean_abstract(str(abstract)) if abstract else None
+        summary = None
+        if abstract:
+            summary = CrossrefAdapter._clean_abstract(str(abstract))[:_MAX_SUMMARY_LENGTH]
 
         return SourceRecord(
             adapter="crossref",
