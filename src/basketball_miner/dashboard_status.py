@@ -23,7 +23,7 @@ ReasonCode = Literal[
 ]
 
 MINER_DELAY_AFTER = timedelta(minutes=60)
-DISTILLATION_DELAY_AFTER = timedelta(hours=12)
+DISTILLATION_DELAY_AFTER = timedelta(hours=6)
 
 
 class HistoryPoint(BaseModel):
@@ -161,6 +161,29 @@ def _miner_component(
     )
 
 
+def _distillation_component(
+    ledger: DistillLedger,
+    generated_at: str,
+    last_success_at: str | None,
+) -> DistillationComponentStatus:
+    pending = _pending_count(ledger)
+    if pending > 0 and _is_older_than(
+        generated_at, last_success_at, DISTILLATION_DELAY_AFTER
+    ):
+        return DistillationComponentStatus(
+            status="DELAYED",
+            pending=pending,
+            last_success_at=last_success_at,
+            reason="NO_RECENT_SUCCESS",
+        )
+    return DistillationComponentStatus(
+        status="OPERATIONAL",
+        pending=pending,
+        last_success_at=last_success_at,
+        reason="NONE",
+    )
+
+
 def _history(collection_stats: CollectionStats) -> list[HistoryPoint]:
     return [
         HistoryPoint(date=date, collected=collection_stats.daily_counts[date])
@@ -196,12 +219,7 @@ def build_public_status(
     last_success_at: str | None,
 ) -> PublicStatus:
     miner = _miner_component(config, collection_stats, generated_at)
-    distillation = DistillationComponentStatus(
-        status="OPERATIONAL",
-        pending=_pending_count(ledger),
-        last_success_at=last_success_at,
-        reason="NONE",
-    )
+    distillation = _distillation_component(ledger, generated_at, last_success_at)
     corpus = CorpusComponentStatus(
         status="OPERATIONAL",
         accepted_total=_accepted_count(concept_rows),
@@ -324,27 +342,11 @@ def build_status_from_store(
                 reason="STATE_MALFORMED",
             )
         else:
-            pending = _pending_count(ledger)
             try:
                 last_success_at = _last_distillation_success_at(store)
             except (RuntimeError, TypeError, ValueError):
                 last_success_at = None
-            if pending > 0 and _is_older_than(
-                generated_at, last_success_at, DISTILLATION_DELAY_AFTER
-            ):
-                distillation = DistillationComponentStatus(
-                    status="DELAYED",
-                    pending=pending,
-                    last_success_at=last_success_at,
-                    reason="NO_RECENT_SUCCESS",
-                )
-            else:
-                distillation = DistillationComponentStatus(
-                    status="OPERATIONAL",
-                    pending=pending,
-                    last_success_at=last_success_at,
-                    reason="NONE",
-                )
+            distillation = _distillation_component(ledger, generated_at, last_success_at)
 
     concept_remote = store.read_file(concept_index_path())
     if concept_remote is None:
