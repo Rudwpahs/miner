@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -21,6 +21,9 @@ SummaryStatus = Literal["OPERATIONAL", "DEGRADED", "PARTIAL_OUTAGE", "STALE"]
 ReasonCode = Literal[
     "NONE", "STATE_UNAVAILABLE", "STATE_MALFORMED", "NO_RECENT_SUCCESS", "PAGE_STALE"
 ]
+
+MINER_DELAY_AFTER = timedelta(minutes=60)
+DISTILLATION_DELAY_AFTER = timedelta(hours=12)
 
 
 class HistoryPoint(BaseModel):
@@ -91,6 +94,14 @@ def _validate_timestamp(value: str | None) -> str | None:
     return value
 
 
+def _is_older_than(reference: str, value: str | None, delay: timedelta) -> bool:
+    if value is None:
+        return True
+    reference_at = datetime.fromisoformat(reference)
+    value_at = datetime.fromisoformat(value)
+    return reference_at - value_at > delay
+
+
 def parse_concept_index(content: bytes) -> list[ConceptIndexRecord]:
     try:
         text = content.decode("utf-8")
@@ -128,14 +139,19 @@ def _accepted_count(concept_rows: list[ConceptIndexRecord]) -> int:
 
 
 def _miner_component(
-    config: MinerTargetConfig, collection_stats: CollectionStats
+    config: MinerTargetConfig,
+    collection_stats: CollectionStats,
+    generated_at: str,
 ) -> MinerComponentStatus:
     active_target = effective_daily_target(config, collection_stats)
-    miner_status: ComponentStatus = (
-        "OPERATIONAL"
-        if collection_stats.today_collected >= active_target
-        else "COLLECTING"
-    )
+    if collection_stats.today_collected >= active_target:
+        miner_status: ComponentStatus = "OPERATIONAL"
+    elif _is_older_than(
+        generated_at, collection_stats.last_miner_run_at, MINER_DELAY_AFTER
+    ):
+        miner_status = "DELAYED"
+    else:
+        miner_status = "COLLECTING"
     return MinerComponentStatus(
         status=miner_status,
         today_collected=collection_stats.today_collected,
@@ -152,6 +168,24 @@ def _history(collection_stats: CollectionStats) -> list[HistoryPoint]:
     ]
 
 
+def _summary_status(
+    miner: MinerComponentStatus,
+    distillation: DistillationComponentStatus,
+    corpus: CorpusComponentStatus,
+) -> SummaryStatus:
+    unavailable_states = {"UNAVAILABLE", "UNKNOWN"}
+    degraded_states = {"DELAYED", "DEGRADED", "UNAVAILABLE", "UNKNOWN"}
+    if miner.status in unavailable_states:
+        return "PARTIAL_OUTAGE"
+    if (
+        miner.status in degraded_states
+        or distillation.status in degraded_states
+        or corpus.status in degraded_states
+    ):
+        return "DEGRADED"
+    return "OPERATIONAL"
+
+
 def build_public_status(
     config: MinerTargetConfig,
     collection_stats: CollectionStats,
@@ -161,21 +195,24 @@ def build_public_status(
     generated_at: str,
     last_success_at: str | None,
 ) -> PublicStatus:
+    miner = _miner_component(config, collection_stats, generated_at)
+    distillation = DistillationComponentStatus(
+        status="OPERATIONAL",
+        pending=_pending_count(ledger),
+        last_success_at=last_success_at,
+        reason="NONE",
+    )
+    corpus = CorpusComponentStatus(
+        status="OPERATIONAL",
+        accepted_total=_accepted_count(concept_rows),
+    )
     status = PublicStatus(
         generated_at=generated_at,
         timezone=config.timezone,
-        summary_status="OPERATIONAL",
-        miner=_miner_component(config, collection_stats),
-        distillation=DistillationComponentStatus(
-            status="OPERATIONAL",
-            pending=_pending_count(ledger),
-            last_success_at=last_success_at,
-            reason="NONE",
-        ),
-        corpus=CorpusComponentStatus(
-            status="OPERATIONAL",
-            accepted_total=_accepted_count(concept_rows),
-        ),
+        summary_status=_summary_status(miner, distillation, corpus),
+        miner=miner,
+        distillation=distillation,
+        corpus=corpus,
         history_7d=_history(collection_stats),
     )
     return validate_public_payload(status.model_dump(mode="json"))
@@ -266,7 +303,7 @@ def build_status_from_store(
 ) -> PublicStatus:
     from basketball_miner.distill_v3.paths import concept_index_path, ledger_path
 
-    miner = _miner_component(config, collection_stats)
+    miner = _miner_component(config, collection_stats, generated_at)
 
     ledger_remote = store.read_file(ledger_path())
     if ledger_remote is None or not ledger_remote.content.strip():
@@ -287,16 +324,27 @@ def build_status_from_store(
                 reason="STATE_MALFORMED",
             )
         else:
+            pending = _pending_count(ledger)
             try:
                 last_success_at = _last_distillation_success_at(store)
             except (RuntimeError, TypeError, ValueError):
                 last_success_at = None
-            distillation = DistillationComponentStatus(
-                status="OPERATIONAL",
-                pending=_pending_count(ledger),
-                last_success_at=last_success_at,
-                reason="NONE",
-            )
+            if pending > 0 and _is_older_than(
+                generated_at, last_success_at, DISTILLATION_DELAY_AFTER
+            ):
+                distillation = DistillationComponentStatus(
+                    status="DELAYED",
+                    pending=pending,
+                    last_success_at=last_success_at,
+                    reason="NO_RECENT_SUCCESS",
+                )
+            else:
+                distillation = DistillationComponentStatus(
+                    status="OPERATIONAL",
+                    pending=pending,
+                    last_success_at=last_success_at,
+                    reason="NONE",
+                )
 
     concept_remote = store.read_file(concept_index_path())
     if concept_remote is None:
@@ -312,17 +360,10 @@ def build_status_from_store(
                 accepted_total=_accepted_count(concept_rows),
             )
 
-    degraded_states = {"DELAYED", "DEGRADED", "UNAVAILABLE", "UNKNOWN"}
-    summary_status: SummaryStatus = (
-        "DEGRADED"
-        if distillation.status in degraded_states or corpus.status in degraded_states
-        else "OPERATIONAL"
-    )
-
     status = PublicStatus(
         generated_at=generated_at,
         timezone=config.timezone,
-        summary_status=summary_status,
+        summary_status=_summary_status(miner, distillation, corpus),
         miner=miner,
         distillation=distillation,
         corpus=corpus,
