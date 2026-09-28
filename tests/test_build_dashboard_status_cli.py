@@ -49,14 +49,21 @@ def test_cli_writes_only_validated_public_status(tmp_path, monkeypatch):
         "build_status_from_store",
         lambda config, stats, store, generated_at: module.PublicStatus(
             generated_at=generated_at,
-            daily_target=config.daily_target,
-            collected_total=stats.collected_total,
-            distillation_pending=1843,
-            distillation_success=2,
-            today_collected=stats.today_collected,
-            last_miner_run_at=stats.last_miner_run_at,
-            last_distillation_success_at="2026-09-18T17:34:13Z",
-            system_status="DISTILLING",
+            summary_status="OPERATIONAL",
+            miner={
+                "status": "COLLECTING",
+                "today_collected": stats.today_collected,
+                "daily_target": config.daily_target,
+                "collected_total": stats.collected_total,
+                "last_success_at": stats.last_miner_run_at,
+            },
+            distillation={
+                "status": "OPERATIONAL",
+                "pending": 1843,
+                "last_success_at": "2026-09-18T17:34:13Z",
+                "reason": "NONE",
+            },
+            corpus={"status": "OPERATIONAL", "accepted_total": 2},
             history_7d=[],
         ),
     )
@@ -76,7 +83,8 @@ def test_cli_writes_only_validated_public_status(tmp_path, monkeypatch):
     )
     assert module.main() == 0
     payload = json.loads(output.read_text(encoding="utf-8"))
-    assert payload["distillation_pending"] == 1843
+    assert payload["schema_version"] == 2
+    assert payload["distillation"]["pending"] == 1843
     assert set(payload) == set(module.PublicStatus.model_fields)
 
 
