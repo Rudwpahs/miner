@@ -58,6 +58,14 @@ def test_refresh_failure_marks_stale_without_clearing_last_metrics():
     assert "replaceChildren()" not in js.split("function renderError", 1)[1].split("async function refresh", 1)[0]
 
 
+def test_old_status_payload_is_marked_stale_after_twenty_minutes():
+    js = Path("dashboard/app.js").read_text(encoding="utf-8")
+    assert "STATUS_STALE_AFTER_MS = 20 * 60 * 1000" in js
+    assert "function isStatusStale" in js
+    assert 'isStatusStale(status.generated_at) ? "STALE" : status.summary_status' in js
+    assert "REASON_COPY.PAGE_STALE" in js
+
+
 def test_target_is_not_hardcoded_in_assets():
     text = "\n".join(Path(path).read_text(encoding="utf-8") for path in ASSETS)
     assert "1659" not in text
