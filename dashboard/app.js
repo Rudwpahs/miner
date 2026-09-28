@@ -6,6 +6,7 @@ const df = new Intl.DateTimeFormat("ko-KR", {
   minute: "2-digit",
   hour12: false,
 });
+const STATUS_STALE_AFTER_MS = 20 * 60 * 1000;
 
 const COMPONENT_LABELS = {
   OPERATIONAL: "Operational",
@@ -54,6 +55,13 @@ function formatNullable(value) {
   return nf.format(value);
 }
 
+function isStatusStale(value) {
+  if (!value) return true;
+  const generated = new Date(value);
+  if (Number.isNaN(generated.getTime())) return true;
+  return Date.now() - generated.getTime() > STATUS_STALE_AFTER_MS;
+}
+
 function renderComponent(name, component) {
   const state = component?.status ?? "UNKNOWN";
   document.querySelector(`#${name}-state`).textContent = COMPONENT_LABELS[state] ?? "Unknown";
@@ -70,19 +78,20 @@ function renderSummary(state) {
   document.querySelector("#summary-description").textContent = copy.description;
 }
 
-function renderIncident(status) {
+function renderIncident(status, summaryState) {
   const panel = document.querySelector("#incident-panel");
-  if (status.summary_status === "OPERATIONAL") {
+  if (summaryState === "OPERATIONAL") {
     panel.hidden = true;
     return;
   }
 
   panel.hidden = false;
-  const reason = status.distillation?.reason ?? "NONE";
+  const stale = summaryState === "STALE";
+  const reason = stale ? "PAGE_STALE" : (status.distillation?.reason ?? "NONE");
   const reasonCopy = REASON_COPY[reason] || "일부 시스템 상태를 확인하고 있습니다.";
-  document.querySelector("#incident-title").textContent = SUMMARY_COPY[status.summary_status]?.title
+  document.querySelector("#incident-title").textContent = SUMMARY_COPY[summaryState]?.title
     ?? "상태 확인 필요";
-  document.querySelector("#incident-copy").textContent = reasonCopy;
+  document.querySelector("#incident-copy").textContent = stale ? REASON_COPY.PAGE_STALE : reasonCopy;
 }
 
 function renderHistory(points) {
@@ -124,7 +133,8 @@ function renderHistory(points) {
 }
 
 function renderStatus(status) {
-  renderSummary(status.summary_status);
+  const summaryState = isStatusStale(status.generated_at) ? "STALE" : status.summary_status;
+  renderSummary(summaryState);
   renderComponent("miner", status.miner);
   renderComponent("distillation", status.distillation);
   renderComponent("corpus", status.corpus);
@@ -140,7 +150,7 @@ function renderStatus(status) {
   document.querySelector("#corpus-total").textContent = formatNullable(status.corpus.accepted_total);
   document.querySelector("#generated-at").textContent = formatTime(status.generated_at);
 
-  renderIncident(status);
+  renderIncident(status, summaryState);
   renderHistory(status.history_7d);
 }
 
