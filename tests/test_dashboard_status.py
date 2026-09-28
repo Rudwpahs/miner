@@ -57,8 +57,8 @@ def test_pending_is_active_union_parked_review():
         generated_at="2026-09-19T18:01:00+09:00",
         last_success_at=None,
     )
-    assert status.distillation_pending == 2
-    assert status.system_status == "DISTILLING"
+    assert status.distillation.pending == 2
+    assert status.distillation.status == "OPERATIONAL"
 
 
 def test_success_counts_unique_accepted_knowledge_units_only():
@@ -75,32 +75,20 @@ def test_success_counts_unique_accepted_knowledge_units_only():
         generated_at="2026-09-19T18:01:00+09:00",
         last_success_at=None,
     )
-    assert status.distillation_success == 1
+    assert status.corpus.accepted_total == 1
 
 
-def test_target_reached_precedes_distilling_status():
+def test_target_reached_marks_miner_operational():
     stats = base_stats().model_copy(update={"today_collected": 1659})
-    ledger = DistillLedger(
-        candidate_states={
-            "CAND-1111111111111111": CandidateStageState(
-                candidate_id="CAND-1111111111111111",
-                source_fingerprint="1" * 64,
-                source_type="academic",
-                stage="TRIAGE",
-                status="PENDING",
-                updated_at="2026-09-19T00:00:00Z",
-            )
-        }
-    )
     status = build_public_status(
         base_config(),
         stats,
-        ledger,
+        DistillLedger(),
         [],
         generated_at="2026-09-19T18:01:00+09:00",
         last_success_at=None,
     )
-    assert status.system_status == "TARGET_REACHED"
+    assert status.miner.status == "OPERATIONAL"
 
 
 def test_dashboard_uses_burst_target_while_burst_is_active():
@@ -126,8 +114,24 @@ def test_dashboard_uses_burst_target_while_burst_is_active():
         generated_at="2026-09-23T18:01:00+09:00",
         last_success_at=None,
     )
-    assert status.daily_target == 100000
-    assert status.system_status == "COLLECTING"
+    assert status.miner.daily_target == 100000
+    assert status.miner.status == "COLLECTING"
+
+
+def test_public_status_v2_has_component_objects():
+    status = build_public_status(
+        base_config(),
+        base_stats(),
+        DistillLedger(),
+        [],
+        generated_at="2026-09-19T18:01:00+09:00",
+        last_success_at=None,
+    )
+    assert status.schema_version == 2
+    assert status.miner.today_collected == 100
+    assert status.distillation.pending == 0
+    assert status.corpus.accepted_total == 0
+    assert status.summary_status == "OPERATIONAL"
 
 
 def test_unknown_public_key_is_rejected():
@@ -140,6 +144,20 @@ def test_unknown_public_key_is_rejected():
         last_success_at=None,
     ).model_dump(mode="json")
     payload["candidate_id"] = "CAND-aaaaaaaaaaaaaaaa"
+    with pytest.raises(ValueError):
+        validate_public_payload(payload)
+
+
+def test_unknown_nested_public_key_is_rejected():
+    payload = build_public_status(
+        base_config(),
+        base_stats(),
+        DistillLedger(),
+        [],
+        generated_at="2026-09-19T18:01:00+09:00",
+        last_success_at=None,
+    ).model_dump(mode="json")
+    payload["distillation"]["candidate_id"] = "CAND-aaaaaaaaaaaaaaaa"
     with pytest.raises(ValueError):
         validate_public_payload(payload)
 
@@ -164,7 +182,7 @@ def test_parse_concept_index_rejects_unknown_status():
         parse_concept_index(b'{"knowledge_unit_id":"KU-1","status":"UNKNOWN"}\n')
 
 
-def test_missing_ledger_fails_closed():
+def test_missing_ledger_still_fails_until_fault_isolation_task():
     from basketball_miner.dashboard_status import build_status_from_store
 
     class Store:
@@ -262,48 +280,5 @@ def test_build_status_reads_private_state_and_latest_success():
         Store(),
         generated_at="2026-09-19T18:01:00+09:00",
     )
-    assert status.distillation_success == 1
-    assert status.last_distillation_success_at == "2026-09-18T17:34:13Z"
-
-
-def test_public_status_v2_has_component_objects():
-    status = build_public_status(
-        base_config(),
-        base_stats(),
-        DistillLedger(),
-        [],
-        generated_at="2026-09-19T18:01:00+09:00",
-        last_success_at=None,
-    )
-    assert status.schema_version == 2
-    assert status.miner.today_collected == 100
-    assert status.distillation.pending == 0
-    assert status.corpus.accepted_total == 0
-    assert status.summary_status in {"OPERATIONAL", "DEGRADED"}
-
-
-def test_unknown_nested_public_key_is_rejected():
-    payload = {
-        "schema_version": 2,
-        "generated_at": "2026-09-19T18:01:00+09:00",
-        "timezone": "Asia/Seoul",
-        "summary_status": "OPERATIONAL",
-        "miner": {
-            "status": "COLLECTING",
-            "today_collected": 100,
-            "daily_target": 1659,
-            "collected_total": 2000,
-            "last_success_at": "2026-09-19T18:00:00+09:00",
-        },
-        "distillation": {
-            "status": "OPERATIONAL",
-            "pending": 0,
-            "last_success_at": None,
-            "reason": "NONE",
-            "candidate_id": "CAND-aaaaaaaaaaaaaaaa",
-        },
-        "corpus": {"status": "OPERATIONAL", "accepted_total": 0},
-        "history_7d": [],
-    }
-    with pytest.raises(ValueError):
-        validate_public_payload(payload)
+    assert status.corpus.accepted_total == 1
+    assert status.distillation.last_success_at == "2026-09-18T17:34:13Z"
