@@ -3,83 +3,109 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark light">
-  <title>Miner Live</title>
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#ffffff">
+  <title>HoopHub Status</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main class="shell">
-    <header class="hero">
-      <div>
-        <p class="eyebrow">HOOPHUB KNOWLEDGE PIPELINE</p>
-        <h1>Miner Live</h1>
-        <p class="subtitle">수집부터 증류까지, 현재 상태를 숫자로만 보여줍니다.</p>
-      </div>
-      <div class="status-wrap" aria-live="polite">
-        <span class="status-dot" aria-hidden="true"></span>
-        <strong id="system-status">LOADING</strong>
+  <div class="page-shell">
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="HoopHub Status 홈">HoopHub Status</a>
+      <div class="header-actions">
+        <span class="updated-label">Updated <time id="generated-at">—</time></span>
+        <button id="refresh-button" class="refresh-button" type="button">새로고침</button>
       </div>
     </header>
 
-    <section class="metric-grid" aria-label="핵심 지표">
-      <article class="metric-card">
-        <span>수집 데이터</span>
-        <strong id="collected-total">—</strong>
-        <small>누적 고유 후보</small>
-      </article>
-      <article class="metric-card">
-        <span>증류 대기</span>
-        <strong id="distillation-pending">—</strong>
-        <small>추가 의미 판단 필요</small>
-      </article>
-      <article class="metric-card">
-        <span>증류 성공</span>
-        <strong id="distillation-success">—</strong>
-        <small>승인된 지식 단위</small>
-      </article>
-    </section>
-
-    <section class="panel progress-panel" aria-labelledby="today-heading">
-      <div class="section-head">
+    <main>
+      <section id="summary-status" class="summary-panel" data-state="LOADING" aria-live="polite">
+        <span class="summary-icon" aria-hidden="true">✓</span>
         <div>
-          <p class="section-kicker">TODAY</p>
-          <h2 id="today-heading">오늘 수집량</h2>
+          <h1 id="summary-title">상태 확인 중</h1>
+          <p id="summary-description">최신 운영 상태를 불러오고 있습니다.</p>
         </div>
-        <strong id="today-progress-label">—</strong>
-      </div>
-      <progress id="today-progress" value="0" max="1">0%</progress>
-      <p class="muted" id="target-note">일일 목표 기준 진행률</p>
-    </section>
+      </section>
 
-    <section class="panel" aria-labelledby="history-heading">
-      <div class="section-head">
+      <section class="status-section" aria-labelledby="system-status-heading">
+        <div class="section-heading">
+          <h2 id="system-status-heading">System status</h2>
+        </div>
+
+        <div id="system-status-list" class="status-list">
+          <article class="status-row" data-component="miner">
+            <div class="status-main">
+              <span class="status-dot" id="miner-dot" aria-hidden="true"></span>
+              <div>
+                <h3>Miner</h3>
+                <p>농구 지식 후보 수집</p>
+              </div>
+            </div>
+            <div class="status-detail">
+              <strong id="miner-state" class="state-label">Loading</strong>
+              <p><span id="miner-today">—</span> · 누적 <span id="miner-total">—</span></p>
+              <p class="muted">마지막 수집 <time id="miner-last">—</time></p>
+            </div>
+          </article>
+
+          <article class="status-row" data-component="distillation">
+            <div class="status-main">
+              <span class="status-dot" id="distillation-dot" aria-hidden="true"></span>
+              <div>
+                <h3>Distillation</h3>
+                <p>후보 검토 및 의미 증류</p>
+              </div>
+            </div>
+            <div class="status-detail">
+              <strong id="distillation-state" class="state-label">Loading</strong>
+              <p>대기 <span id="distillation-pending">—</span></p>
+              <p class="muted">마지막 성공 <time id="distillation-last">—</time></p>
+            </div>
+          </article>
+
+          <article class="status-row" data-component="corpus">
+            <div class="status-main">
+              <span class="status-dot" id="corpus-dot" aria-hidden="true"></span>
+              <div>
+                <h3>Corpus</h3>
+                <p>승인된 지식 단위</p>
+              </div>
+            </div>
+            <div class="status-detail">
+              <strong id="corpus-state" class="state-label">Loading</strong>
+              <p>승인 <span id="corpus-total">—</span> KU</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="incident-panel" class="incident-panel" hidden aria-live="polite">
+        <div class="incident-marker" aria-hidden="true"></div>
         <div>
-          <p class="section-kicker">7 DAYS</p>
-          <h2 id="history-heading">최근 수집량</h2>
+          <p class="incident-kicker">Current notice</p>
+          <h2 id="incident-title">일부 처리 상태를 확인 중입니다</h2>
+          <p id="incident-copy">확인 가능한 시스템은 계속 표시합니다.</p>
         </div>
-      </div>
-      <div id="history-chart" class="history-chart" aria-label="최근 7일 수집량"></div>
-    </section>
+      </section>
 
-    <section class="panel timestamps" aria-label="갱신 정보">
-      <div>
-        <span>마지막 Miner 실행</span>
-        <time id="last-miner-run">—</time>
-      </div>
-      <div>
-        <span>마지막 증류 성공</span>
-        <time id="last-distillation-success">—</time>
-      </div>
-      <div>
-        <span>현황 생성</span>
-        <time id="generated-at">—</time>
-      </div>
-    </section>
+      <section class="history-section" aria-labelledby="history-heading">
+        <div class="section-heading history-heading">
+          <div>
+            <h2 id="history-heading">최근 7일 수집 상태</h2>
+            <p>서울 날짜 기준 일별 Miner 수집량</p>
+          </div>
+          <span class="history-legend"><span class="legend-dot"></span> Collected</span>
+        </div>
+        <div id="history-strip" class="history-strip" aria-label="최근 7일 Miner 수집량"></div>
+      </section>
+    </main>
 
-    <footer>
+    <footer class="site-footer">
+      <span>HoopHub operational status</span>
       <span>Aggregate metrics only · candidate-level data stays private</span>
     </footer>
-  </main>
+  </div>
+
   <script src="app.js" defer></script>
 </body>
 </html>

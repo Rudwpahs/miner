@@ -35,6 +35,23 @@ def write_inputs(tmp_path: Path):
     return target, state
 
 
+def configure_cli(module, monkeypatch, target: Path, state: Path, output: Path):
+    monkeypatch.setenv("HOOPHUB_MINER_TOKEN", "token")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "build_dashboard_status.py",
+            "--target-config",
+            str(target),
+            "--collection-state",
+            str(state),
+            "--output",
+            str(output),
+        ],
+    )
+
+
 def test_cli_writes_only_validated_public_status(tmp_path, monkeypatch):
     module = load_script()
     target, state = write_inputs(tmp_path)
@@ -49,35 +66,69 @@ def test_cli_writes_only_validated_public_status(tmp_path, monkeypatch):
         "build_status_from_store",
         lambda config, stats, store, generated_at: module.PublicStatus(
             generated_at=generated_at,
-            daily_target=config.daily_target,
-            collected_total=stats.collected_total,
-            distillation_pending=1843,
-            distillation_success=2,
-            today_collected=stats.today_collected,
-            last_miner_run_at=stats.last_miner_run_at,
-            last_distillation_success_at="2026-09-18T17:34:13Z",
-            system_status="DISTILLING",
+            summary_status="OPERATIONAL",
+            miner={
+                "status": "COLLECTING",
+                "today_collected": stats.today_collected,
+                "daily_target": config.daily_target,
+                "collected_total": stats.collected_total,
+                "last_success_at": stats.last_miner_run_at,
+            },
+            distillation={
+                "status": "OPERATIONAL",
+                "pending": 1843,
+                "last_success_at": "2026-09-18T17:34:13Z",
+                "reason": "NONE",
+            },
+            corpus={"status": "OPERATIONAL", "accepted_total": 2},
             history_7d=[],
         ),
     )
-    monkeypatch.setenv("HOOPHUB_MINER_TOKEN", "token")
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "build_dashboard_status.py",
-            "--target-config",
-            str(target),
-            "--collection-state",
-            str(state),
-            "--output",
-            str(output),
-        ],
-    )
+    configure_cli(module, monkeypatch, target, state, output)
+
     assert module.main() == 0
     payload = json.loads(output.read_text(encoding="utf-8"))
-    assert payload["distillation_pending"] == 1843
+    assert payload["schema_version"] == 2
+    assert payload["distillation"]["pending"] == 1843
     assert set(payload) == set(module.PublicStatus.model_fields)
+
+
+def test_cli_publishes_degraded_status_with_nullable_distillation(tmp_path, monkeypatch):
+    module = load_script()
+    target, state = write_inputs(tmp_path)
+    output = tmp_path / "site" / "status.json"
+
+    monkeypatch.setattr(module, "GitHubV3Store", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        module,
+        "build_status_from_store",
+        lambda config, stats, store, generated_at: module.PublicStatus(
+            generated_at=generated_at,
+            summary_status="DEGRADED",
+            miner={
+                "status": "COLLECTING",
+                "today_collected": stats.today_collected,
+                "daily_target": config.daily_target,
+                "collected_total": stats.collected_total,
+                "last_success_at": stats.last_miner_run_at,
+            },
+            distillation={
+                "status": "UNAVAILABLE",
+                "pending": None,
+                "last_success_at": None,
+                "reason": "STATE_UNAVAILABLE",
+            },
+            corpus={"status": "OPERATIONAL", "accepted_total": 2},
+            history_7d=[],
+        ),
+    )
+    configure_cli(module, monkeypatch, target, state, output)
+
+    assert module.main() == 0
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["summary_status"] == "DEGRADED"
+    assert payload["distillation"]["pending"] is None
+    assert payload["distillation"]["reason"] == "STATE_UNAVAILABLE"
 
 
 def test_cli_failure_does_not_replace_last_good_status(tmp_path, monkeypatch):
@@ -91,22 +142,10 @@ def test_cli_failure_does_not_replace_last_good_status(tmp_path, monkeypatch):
     monkeypatch.setattr(
         module,
         "build_status_from_store",
-        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("V3 ledger is missing")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("unexpected failure")),
     )
-    monkeypatch.setenv("HOOPHUB_MINER_TOKEN", "token")
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "build_dashboard_status.py",
-            "--target-config",
-            str(target),
-            "--collection-state",
-            str(state),
-            "--output",
-            str(output),
-        ],
-    )
-    with pytest.raises(RuntimeError, match="ledger"):
+    configure_cli(module, monkeypatch, target, state, output)
+
+    with pytest.raises(RuntimeError, match="unexpected"):
         module.main()
     assert output.read_text(encoding="utf-8") == '{"last_good":true}\n'

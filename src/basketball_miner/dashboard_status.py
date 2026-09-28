@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -14,6 +14,17 @@ from basketball_miner.collection_stats import (
 from basketball_miner.distill_v3.concept_index import ConceptIndexRecord
 from basketball_miner.distill_v3.ledger import DistillLedger
 
+ComponentStatus = Literal[
+    "OPERATIONAL", "COLLECTING", "DELAYED", "DEGRADED", "UNAVAILABLE", "UNKNOWN"
+]
+SummaryStatus = Literal["OPERATIONAL", "DEGRADED", "PARTIAL_OUTAGE", "STALE"]
+ReasonCode = Literal[
+    "NONE", "STATE_UNAVAILABLE", "STATE_MALFORMED", "NO_RECENT_SUCCESS", "PAGE_STALE"
+]
+
+MINER_DELAY_AFTER = timedelta(minutes=60)
+DISTILLATION_DELAY_AFTER = timedelta(hours=6)
+
 
 class HistoryPoint(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -21,33 +32,74 @@ class HistoryPoint(BaseModel):
     collected: int = Field(ge=0)
 
 
-class PublicStatus(BaseModel):
+class MinerComponentStatus(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    schema_version: Literal[1] = 1
-    generated_at: str
-    timezone: Literal["Asia/Seoul"] = "Asia/Seoul"
+    status: ComponentStatus
+    today_collected: int = Field(ge=0)
     daily_target: int = Field(gt=0)
     collected_total: int = Field(ge=0)
-    distillation_pending: int = Field(ge=0)
-    distillation_success: int = Field(ge=0)
-    today_collected: int = Field(ge=0)
-    last_miner_run_at: str | None = None
-    last_distillation_success_at: str | None = None
-    system_status: Literal[
-        "COLLECTING", "TARGET_REACHED", "DISTILLING", "BLOCKED", "DEGRADED"
-    ]
-    history_7d: list[HistoryPoint] = Field(default_factory=list, max_length=7)
+    last_success_at: str | None = None
 
-    @field_validator("generated_at", "last_miner_run_at", "last_distillation_success_at")
+    @field_validator("last_success_at")
     @classmethod
     def validate_timestamp(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        try:
-            datetime.fromisoformat(value)
-        except ValueError as exc:
-            raise ValueError("timestamp must be ISO-8601") from exc
-        return value
+        return _validate_timestamp(value)
+
+
+class DistillationComponentStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: ComponentStatus
+    pending: int | None = Field(default=None, ge=0)
+    last_success_at: str | None = None
+    reason: ReasonCode = "NONE"
+
+    @field_validator("last_success_at")
+    @classmethod
+    def validate_timestamp(cls, value: str | None) -> str | None:
+        return _validate_timestamp(value)
+
+
+class CorpusComponentStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: ComponentStatus
+    accepted_total: int | None = Field(default=None, ge=0)
+
+
+class PublicStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    schema_version: Literal[2] = 2
+    generated_at: str
+    timezone: Literal["Asia/Seoul"] = "Asia/Seoul"
+    summary_status: SummaryStatus
+    miner: MinerComponentStatus
+    distillation: DistillationComponentStatus
+    corpus: CorpusComponentStatus
+    history_7d: list[HistoryPoint] = Field(default_factory=list, max_length=7)
+
+    @field_validator("generated_at")
+    @classmethod
+    def validate_timestamp(cls, value: str) -> str:
+        validated = _validate_timestamp(value)
+        assert validated is not None
+        return validated
+
+
+def _validate_timestamp(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("timestamp must be ISO-8601") from exc
+    return value
+
+
+def _is_older_than(reference: str, value: str | None, delay: timedelta) -> bool:
+    if value is None:
+        return True
+    reference_at = datetime.fromisoformat(reference)
+    value_at = datetime.fromisoformat(value)
+    return reference_at - value_at > delay
 
 
 def parse_concept_index(content: bytes) -> list[ConceptIndexRecord]:
@@ -69,6 +121,94 @@ def parse_concept_index(content: bytes) -> list[ConceptIndexRecord]:
     return rows
 
 
+def _pending_count(ledger: DistillLedger) -> int:
+    active_ids = {
+        candidate_id
+        for candidate_id, state in ledger.candidate_states.items()
+        if state.status in {"PENDING", "CLAIMED"}
+    }
+    pending_ids = active_ids | set(ledger.parked_review_candidate_ids)
+    return len(pending_ids)
+
+
+def _accepted_count(concept_rows: list[ConceptIndexRecord]) -> int:
+    accepted_ku_ids = {
+        row.knowledge_unit_id for row in concept_rows if row.status == "ACCEPTED"
+    }
+    return len(accepted_ku_ids)
+
+
+def _miner_component(
+    config: MinerTargetConfig,
+    collection_stats: CollectionStats,
+    generated_at: str,
+) -> MinerComponentStatus:
+    active_target = effective_daily_target(config, collection_stats)
+    if collection_stats.today_collected >= active_target:
+        miner_status: ComponentStatus = "OPERATIONAL"
+    elif _is_older_than(
+        generated_at, collection_stats.last_miner_run_at, MINER_DELAY_AFTER
+    ):
+        miner_status = "DELAYED"
+    else:
+        miner_status = "COLLECTING"
+    return MinerComponentStatus(
+        status=miner_status,
+        today_collected=collection_stats.today_collected,
+        daily_target=active_target,
+        collected_total=collection_stats.collected_total,
+        last_success_at=collection_stats.last_miner_run_at,
+    )
+
+
+def _distillation_component(
+    ledger: DistillLedger,
+    generated_at: str,
+    last_success_at: str | None,
+) -> DistillationComponentStatus:
+    pending = _pending_count(ledger)
+    if pending > 0 and _is_older_than(
+        generated_at, last_success_at, DISTILLATION_DELAY_AFTER
+    ):
+        return DistillationComponentStatus(
+            status="DELAYED",
+            pending=pending,
+            last_success_at=last_success_at,
+            reason="NO_RECENT_SUCCESS",
+        )
+    return DistillationComponentStatus(
+        status="OPERATIONAL",
+        pending=pending,
+        last_success_at=last_success_at,
+        reason="NONE",
+    )
+
+
+def _history(collection_stats: CollectionStats) -> list[HistoryPoint]:
+    return [
+        HistoryPoint(date=date, collected=collection_stats.daily_counts[date])
+        for date in sorted(collection_stats.daily_counts)[-7:]
+    ]
+
+
+def _summary_status(
+    miner: MinerComponentStatus,
+    distillation: DistillationComponentStatus,
+    corpus: CorpusComponentStatus,
+) -> SummaryStatus:
+    unavailable_states = {"UNAVAILABLE", "UNKNOWN"}
+    degraded_states = {"DELAYED", "DEGRADED", "UNAVAILABLE", "UNKNOWN"}
+    if miner.status in unavailable_states:
+        return "PARTIAL_OUTAGE"
+    if (
+        miner.status in degraded_states
+        or distillation.status in degraded_states
+        or corpus.status in degraded_states
+    ):
+        return "DEGRADED"
+    return "OPERATIONAL"
+
+
 def build_public_status(
     config: MinerTargetConfig,
     collection_stats: CollectionStats,
@@ -78,41 +218,20 @@ def build_public_status(
     generated_at: str,
     last_success_at: str | None,
 ) -> PublicStatus:
-    active_ids = {
-        candidate_id
-        for candidate_id, state in ledger.candidate_states.items()
-        if state.status in {"PENDING", "CLAIMED"}
-    }
-    pending_ids = active_ids | set(ledger.parked_review_candidate_ids)
-    accepted_ku_ids = {
-        row.knowledge_unit_id for row in concept_rows if row.status == "ACCEPTED"
-    }
-    active_target = effective_daily_target(config, collection_stats)
-
-    if collection_stats.today_collected >= active_target:
-        system_status = "TARGET_REACHED"
-    elif pending_ids:
-        system_status = "DISTILLING"
-    else:
-        system_status = "COLLECTING"
-
-    history = [
-        HistoryPoint(date=date, collected=collection_stats.daily_counts[date])
-        for date in sorted(collection_stats.daily_counts)[-7:]
-    ]
-
+    miner = _miner_component(config, collection_stats, generated_at)
+    distillation = _distillation_component(ledger, generated_at, last_success_at)
+    corpus = CorpusComponentStatus(
+        status="OPERATIONAL",
+        accepted_total=_accepted_count(concept_rows),
+    )
     status = PublicStatus(
         generated_at=generated_at,
         timezone=config.timezone,
-        daily_target=active_target,
-        collected_total=collection_stats.collected_total,
-        distillation_pending=len(pending_ids),
-        distillation_success=len(accepted_ku_ids),
-        today_collected=collection_stats.today_collected,
-        last_miner_run_at=collection_stats.last_miner_run_at,
-        last_distillation_success_at=last_success_at,
-        system_status=system_status,
-        history_7d=history,
+        summary_status=_summary_status(miner, distillation, corpus),
+        miner=miner,
+        distillation=distillation,
+        corpus=corpus,
+        history_7d=_history(collection_stats),
     )
     return validate_public_payload(status.model_dump(mode="json"))
 
@@ -200,26 +319,56 @@ def build_status_from_store(
     *,
     generated_at: str,
 ) -> PublicStatus:
-    from basketball_miner.distill_v3.ledger import DistillLedger
     from basketball_miner.distill_v3.paths import concept_index_path, ledger_path
 
+    miner = _miner_component(config, collection_stats, generated_at)
+
     ledger_remote = store.read_file(ledger_path())
-    if ledger_remote is None:
-        raise RuntimeError("V3 ledger is missing")
+    if ledger_remote is None or not ledger_remote.content.strip():
+        distillation = DistillationComponentStatus(
+            status="UNAVAILABLE",
+            pending=None,
+            last_success_at=None,
+            reason="STATE_UNAVAILABLE",
+        )
+    else:
+        try:
+            ledger = DistillLedger.model_validate_json(ledger_remote.content)
+        except ValueError:
+            distillation = DistillationComponentStatus(
+                status="UNAVAILABLE",
+                pending=None,
+                last_success_at=None,
+                reason="STATE_MALFORMED",
+            )
+        else:
+            try:
+                last_success_at = _last_distillation_success_at(store)
+            except (RuntimeError, TypeError, ValueError):
+                last_success_at = None
+            distillation = _distillation_component(ledger, generated_at, last_success_at)
+
     concept_remote = store.read_file(concept_index_path())
     if concept_remote is None:
-        raise RuntimeError("V3 concept index is missing")
-    try:
-        ledger = DistillLedger.model_validate_json(ledger_remote.content)
-    except ValueError as exc:
-        raise ValueError("V3 ledger is malformed") from exc
-    concept_rows = parse_concept_index(concept_remote.content)
-    last_success_at = _last_distillation_success_at(store)
-    return build_public_status(
-        config,
-        collection_stats,
-        ledger,
-        concept_rows,
+        corpus = CorpusComponentStatus(status="UNAVAILABLE", accepted_total=None)
+    else:
+        try:
+            concept_rows = parse_concept_index(concept_remote.content)
+        except (TypeError, ValueError):
+            corpus = CorpusComponentStatus(status="UNAVAILABLE", accepted_total=None)
+        else:
+            corpus = CorpusComponentStatus(
+                status="OPERATIONAL",
+                accepted_total=_accepted_count(concept_rows),
+            )
+
+    status = PublicStatus(
         generated_at=generated_at,
-        last_success_at=last_success_at,
+        timezone=config.timezone,
+        summary_status=_summary_status(miner, distillation, corpus),
+        miner=miner,
+        distillation=distillation,
+        corpus=corpus,
+        history_7d=_history(collection_stats),
     )
+    return validate_public_payload(status.model_dump(mode="json"))

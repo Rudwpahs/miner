@@ -55,10 +55,10 @@ def test_pending_is_active_union_parked_review():
         ledger,
         [],
         generated_at="2026-09-19T18:01:00+09:00",
-        last_success_at=None,
+        last_success_at="2026-09-19T17:00:00+09:00",
     )
-    assert status.distillation_pending == 2
-    assert status.system_status == "DISTILLING"
+    assert status.distillation.pending == 2
+    assert status.distillation.status == "OPERATIONAL"
 
 
 def test_success_counts_unique_accepted_knowledge_units_only():
@@ -75,11 +75,39 @@ def test_success_counts_unique_accepted_knowledge_units_only():
         generated_at="2026-09-19T18:01:00+09:00",
         last_success_at=None,
     )
-    assert status.distillation_success == 1
+    assert status.corpus.accepted_total == 1
 
 
-def test_target_reached_precedes_distilling_status():
+def test_target_reached_marks_miner_operational():
     stats = base_stats().model_copy(update={"today_collected": 1659})
+    status = build_public_status(
+        base_config(),
+        stats,
+        DistillLedger(),
+        [],
+        generated_at="2026-09-19T18:01:00+09:00",
+        last_success_at=None,
+    )
+    assert status.miner.status == "OPERATIONAL"
+
+
+def test_stale_miner_below_target_is_delayed():
+    stats = base_stats().model_copy(
+        update={"last_miner_run_at": "2026-09-19T15:00:00+09:00"}
+    )
+    status = build_public_status(
+        base_config(),
+        stats,
+        DistillLedger(),
+        [],
+        generated_at="2026-09-19T18:01:00+09:00",
+        last_success_at=None,
+    )
+    assert status.miner.status == "DELAYED"
+    assert status.summary_status == "DEGRADED"
+
+
+def test_pending_distillation_without_recent_success_is_delayed():
     ledger = DistillLedger(
         candidate_states={
             "CAND-1111111111111111": CandidateStageState(
@@ -94,13 +122,15 @@ def test_target_reached_precedes_distilling_status():
     )
     status = build_public_status(
         base_config(),
-        stats,
+        base_stats(),
         ledger,
         [],
         generated_at="2026-09-19T18:01:00+09:00",
-        last_success_at=None,
+        last_success_at="2026-09-19T10:00:00+09:00",
     )
-    assert status.system_status == "TARGET_REACHED"
+    assert status.distillation.status == "DELAYED"
+    assert status.distillation.reason == "NO_RECENT_SUCCESS"
+    assert status.summary_status == "DEGRADED"
 
 
 def test_dashboard_uses_burst_target_while_burst_is_active():
@@ -116,6 +146,7 @@ def test_dashboard_uses_burst_target_while_burst_is_active():
             "date": "2026-09-23",
             "today_collected": 2000,
             "daily_counts": {"2026-09-23": 2000},
+            "last_miner_run_at": "2026-09-23T18:00:00+09:00",
         }
     )
     status = build_public_status(
@@ -126,8 +157,24 @@ def test_dashboard_uses_burst_target_while_burst_is_active():
         generated_at="2026-09-23T18:01:00+09:00",
         last_success_at=None,
     )
-    assert status.daily_target == 100000
-    assert status.system_status == "COLLECTING"
+    assert status.miner.daily_target == 100000
+    assert status.miner.status == "COLLECTING"
+
+
+def test_public_status_v2_has_component_objects():
+    status = build_public_status(
+        base_config(),
+        base_stats(),
+        DistillLedger(),
+        [],
+        generated_at="2026-09-19T18:01:00+09:00",
+        last_success_at=None,
+    )
+    assert status.schema_version == 2
+    assert status.miner.today_collected == 100
+    assert status.distillation.pending == 0
+    assert status.corpus.accepted_total == 0
+    assert status.summary_status == "OPERATIONAL"
 
 
 def test_unknown_public_key_is_rejected():
@@ -140,6 +187,20 @@ def test_unknown_public_key_is_rejected():
         last_success_at=None,
     ).model_dump(mode="json")
     payload["candidate_id"] = "CAND-aaaaaaaaaaaaaaaa"
+    with pytest.raises(ValueError):
+        validate_public_payload(payload)
+
+
+def test_unknown_nested_public_key_is_rejected():
+    payload = build_public_status(
+        base_config(),
+        base_stats(),
+        DistillLedger(),
+        [],
+        generated_at="2026-09-19T18:01:00+09:00",
+        last_success_at=None,
+    ).model_dump(mode="json")
+    payload["distillation"]["candidate_id"] = "CAND-aaaaaaaaaaaaaaaa"
     with pytest.raises(ValueError):
         validate_public_payload(payload)
 
@@ -164,23 +225,82 @@ def test_parse_concept_index_rejects_unknown_status():
         parse_concept_index(b'{"knowledge_unit_id":"KU-1","status":"UNKNOWN"}\n')
 
 
-def test_missing_ledger_fails_closed():
+def test_empty_ledger_degrades_distillation_without_hiding_miner_or_corpus():
     from basketball_miner.dashboard_status import build_status_from_store
+
+    class Remote:
+        def __init__(self, content):
+            self.content = content
+            self.sha = "0" * 40
 
     class Store:
         def read_file(self, path):
+            if path.endswith("distill.json"):
+                return Remote(b"")
+            if path.endswith("concept_index.jsonl"):
+                return Remote(b'{"knowledge_unit_id":"KU-1","status":"ACCEPTED"}\n')
             return None
 
         def list_dir(self, path):
             return []
 
-    with pytest.raises(RuntimeError, match="ledger"):
-        build_status_from_store(
-            base_config(),
-            base_stats(),
-            Store(),
-            generated_at="2026-09-19T18:01:00+09:00",
-        )
+    status = build_status_from_store(
+        base_config(),
+        base_stats(),
+        Store(),
+        generated_at="2026-09-19T18:01:00+09:00",
+    )
+    assert status.miner.today_collected == 100
+    assert status.distillation.status == "UNAVAILABLE"
+    assert status.distillation.pending is None
+    assert status.distillation.reason == "STATE_UNAVAILABLE"
+    assert status.corpus.status == "OPERATIONAL"
+    assert status.corpus.accepted_total == 1
+    assert status.summary_status == "DEGRADED"
+
+
+def test_malformed_concept_index_only_degrades_corpus():
+    from basketball_miner.dashboard_status import build_status_from_store
+
+    class Remote:
+        def __init__(self, content):
+            self.content = content
+            self.sha = "0" * 40
+
+    ledger_payload = {
+        "processed_blob_shas": [],
+        "processed_staging_shas": [],
+        "completed_batch_ids": [],
+        "parked_review_candidate_ids": [],
+        "terminal_candidate_ids": [],
+        "review_candidate_ids": [],
+        "normalized_source_keys": [],
+        "canonical_hashes": [],
+        "candidate_states": {},
+    }
+
+    class Store:
+        def read_file(self, path):
+            if path.endswith("distill.json"):
+                return Remote(json.dumps(ledger_payload).encode())
+            if path.endswith("concept_index.jsonl"):
+                return Remote(b"not-json\n")
+            return None
+
+        def list_dir(self, path):
+            return []
+
+    status = build_status_from_store(
+        base_config(),
+        base_stats(),
+        Store(),
+        generated_at="2026-09-19T18:01:00+09:00",
+    )
+    assert status.distillation.status == "OPERATIONAL"
+    assert status.distillation.pending == 0
+    assert status.corpus.status == "UNAVAILABLE"
+    assert status.corpus.accepted_total is None
+    assert status.summary_status == "DEGRADED"
 
 
 def test_build_status_reads_private_state_and_latest_success():
@@ -262,5 +382,5 @@ def test_build_status_reads_private_state_and_latest_success():
         Store(),
         generated_at="2026-09-19T18:01:00+09:00",
     )
-    assert status.distillation_success == 1
-    assert status.last_distillation_success_at == "2026-09-18T17:34:13Z"
+    assert status.corpus.accepted_total == 1
+    assert status.distillation.last_success_at == "2026-09-18T17:34:13Z"
