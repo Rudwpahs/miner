@@ -264,3 +264,46 @@ def test_build_status_reads_private_state_and_latest_success():
     )
     assert status.distillation_success == 1
     assert status.last_distillation_success_at == "2026-09-18T17:34:13Z"
+
+
+def test_public_status_v2_has_component_objects():
+    status = build_public_status(
+        base_config(),
+        base_stats(),
+        DistillLedger(),
+        [],
+        generated_at="2026-09-19T18:01:00+09:00",
+        last_success_at=None,
+    )
+    assert status.schema_version == 2
+    assert status.miner.today_collected == 100
+    assert status.distillation.pending == 0
+    assert status.corpus.accepted_total == 0
+    assert status.summary_status in {"OPERATIONAL", "DEGRADED"}
+
+
+def test_unknown_nested_public_key_is_rejected():
+    payload = {
+        "schema_version": 2,
+        "generated_at": "2026-09-19T18:01:00+09:00",
+        "timezone": "Asia/Seoul",
+        "summary_status": "OPERATIONAL",
+        "miner": {
+            "status": "COLLECTING",
+            "today_collected": 100,
+            "daily_target": 1659,
+            "collected_total": 2000,
+            "last_success_at": "2026-09-19T18:00:00+09:00",
+        },
+        "distillation": {
+            "status": "OPERATIONAL",
+            "pending": 0,
+            "last_success_at": None,
+            "reason": "NONE",
+            "candidate_id": "CAND-aaaaaaaaaaaaaaaa",
+        },
+        "corpus": {"status": "OPERATIONAL", "accepted_total": 0},
+        "history_7d": [],
+    }
+    with pytest.raises(ValueError):
+        validate_public_payload(payload)
