@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Stage = Literal["TRIAGE", "DEEP", "JUDGE", "REVIEW", "AUDIT"]
 BatchStatus = Literal["PENDING", "CLAIMED", "COMPLETE", "FAILED"]
@@ -34,6 +34,13 @@ class BatchRecord(BaseModel):
     created_at: str = Field(min_length=1)
     input_fingerprints: list[str] = Field(min_length=1, max_length=100)
     status: BatchStatus
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_legacy_completed_status(cls, value: object) -> object:
+        if value == "COMPLETED":
+            return "COMPLETE"
+        return value
 
     @model_validator(mode="after")
     def validate_members(self) -> BatchRecord:
