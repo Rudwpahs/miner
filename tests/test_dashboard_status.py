@@ -146,6 +146,7 @@ def test_dashboard_uses_burst_target_while_burst_is_active():
             "date": "2026-09-23",
             "today_collected": 2000,
             "daily_counts": {"2026-09-23": 2000},
+            "last_miner_run_at": "2026-09-23T18:00:00+09:00",
         }
     )
     status = build_public_status(
