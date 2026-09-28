@@ -14,6 +14,14 @@ from basketball_miner.collection_stats import (
 from basketball_miner.distill_v3.concept_index import ConceptIndexRecord
 from basketball_miner.distill_v3.ledger import DistillLedger
 
+ComponentStatus = Literal[
+    "OPERATIONAL", "COLLECTING", "DELAYED", "DEGRADED", "UNAVAILABLE", "UNKNOWN"
+]
+SummaryStatus = Literal["OPERATIONAL", "DEGRADED", "PARTIAL_OUTAGE", "STALE"]
+ReasonCode = Literal[
+    "NONE", "STATE_UNAVAILABLE", "STATE_MALFORMED", "NO_RECENT_SUCCESS", "PAGE_STALE"
+]
+
 
 class HistoryPoint(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -21,33 +29,66 @@ class HistoryPoint(BaseModel):
     collected: int = Field(ge=0)
 
 
-class PublicStatus(BaseModel):
+class MinerComponentStatus(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    schema_version: Literal[1] = 1
-    generated_at: str
-    timezone: Literal["Asia/Seoul"] = "Asia/Seoul"
+    status: ComponentStatus
+    today_collected: int = Field(ge=0)
     daily_target: int = Field(gt=0)
     collected_total: int = Field(ge=0)
-    distillation_pending: int = Field(ge=0)
-    distillation_success: int = Field(ge=0)
-    today_collected: int = Field(ge=0)
-    last_miner_run_at: str | None = None
-    last_distillation_success_at: str | None = None
-    system_status: Literal[
-        "COLLECTING", "TARGET_REACHED", "DISTILLING", "BLOCKED", "DEGRADED"
-    ]
-    history_7d: list[HistoryPoint] = Field(default_factory=list, max_length=7)
+    last_success_at: str | None = None
 
-    @field_validator("generated_at", "last_miner_run_at", "last_distillation_success_at")
+    @field_validator("last_success_at")
     @classmethod
     def validate_timestamp(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        try:
-            datetime.fromisoformat(value)
-        except ValueError as exc:
-            raise ValueError("timestamp must be ISO-8601") from exc
-        return value
+        return _validate_timestamp(value)
+
+
+class DistillationComponentStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: ComponentStatus
+    pending: int | None = Field(default=None, ge=0)
+    last_success_at: str | None = None
+    reason: ReasonCode = "NONE"
+
+    @field_validator("last_success_at")
+    @classmethod
+    def validate_timestamp(cls, value: str | None) -> str | None:
+        return _validate_timestamp(value)
+
+
+class CorpusComponentStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: ComponentStatus
+    accepted_total: int | None = Field(default=None, ge=0)
+
+
+class PublicStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    schema_version: Literal[2] = 2
+    generated_at: str
+    timezone: Literal["Asia/Seoul"] = "Asia/Seoul"
+    summary_status: SummaryStatus
+    miner: MinerComponentStatus
+    distillation: DistillationComponentStatus
+    corpus: CorpusComponentStatus
+    history_7d: list[HistoryPoint] = Field(default_factory=list, max_length=7)
+
+    @field_validator("generated_at")
+    @classmethod
+    def validate_timestamp(cls, value: str) -> str:
+        validated = _validate_timestamp(value)
+        assert validated is not None
+        return validated
+
+
+def _validate_timestamp(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("timestamp must be ISO-8601") from exc
+    return value
 
 
 def parse_concept_index(content: bytes) -> list[ConceptIndexRecord]:
@@ -88,13 +129,11 @@ def build_public_status(
         row.knowledge_unit_id for row in concept_rows if row.status == "ACCEPTED"
     }
     active_target = effective_daily_target(config, collection_stats)
-
-    if collection_stats.today_collected >= active_target:
-        system_status = "TARGET_REACHED"
-    elif pending_ids:
-        system_status = "DISTILLING"
-    else:
-        system_status = "COLLECTING"
+    miner_status: ComponentStatus = (
+        "OPERATIONAL"
+        if collection_stats.today_collected >= active_target
+        else "COLLECTING"
+    )
 
     history = [
         HistoryPoint(date=date, collected=collection_stats.daily_counts[date])
@@ -104,14 +143,24 @@ def build_public_status(
     status = PublicStatus(
         generated_at=generated_at,
         timezone=config.timezone,
-        daily_target=active_target,
-        collected_total=collection_stats.collected_total,
-        distillation_pending=len(pending_ids),
-        distillation_success=len(accepted_ku_ids),
-        today_collected=collection_stats.today_collected,
-        last_miner_run_at=collection_stats.last_miner_run_at,
-        last_distillation_success_at=last_success_at,
-        system_status=system_status,
+        summary_status="OPERATIONAL",
+        miner=MinerComponentStatus(
+            status=miner_status,
+            today_collected=collection_stats.today_collected,
+            daily_target=active_target,
+            collected_total=collection_stats.collected_total,
+            last_success_at=collection_stats.last_miner_run_at,
+        ),
+        distillation=DistillationComponentStatus(
+            status="OPERATIONAL",
+            pending=len(pending_ids),
+            last_success_at=last_success_at,
+            reason="NONE",
+        ),
+        corpus=CorpusComponentStatus(
+            status="OPERATIONAL",
+            accepted_total=len(accepted_ku_ids),
+        ),
         history_7d=history,
     )
     return validate_public_payload(status.model_dump(mode="json"))
@@ -200,7 +249,6 @@ def build_status_from_store(
     *,
     generated_at: str,
 ) -> PublicStatus:
-    from basketball_miner.distill_v3.ledger import DistillLedger
     from basketball_miner.distill_v3.paths import concept_index_path, ledger_path
 
     ledger_remote = store.read_file(ledger_path())
