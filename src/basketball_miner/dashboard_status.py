@@ -110,6 +110,48 @@ def parse_concept_index(content: bytes) -> list[ConceptIndexRecord]:
     return rows
 
 
+def _pending_count(ledger: DistillLedger) -> int:
+    active_ids = {
+        candidate_id
+        for candidate_id, state in ledger.candidate_states.items()
+        if state.status in {"PENDING", "CLAIMED"}
+    }
+    pending_ids = active_ids | set(ledger.parked_review_candidate_ids)
+    return len(pending_ids)
+
+
+def _accepted_count(concept_rows: list[ConceptIndexRecord]) -> int:
+    accepted_ku_ids = {
+        row.knowledge_unit_id for row in concept_rows if row.status == "ACCEPTED"
+    }
+    return len(accepted_ku_ids)
+
+
+def _miner_component(
+    config: MinerTargetConfig, collection_stats: CollectionStats
+) -> MinerComponentStatus:
+    active_target = effective_daily_target(config, collection_stats)
+    miner_status: ComponentStatus = (
+        "OPERATIONAL"
+        if collection_stats.today_collected >= active_target
+        else "COLLECTING"
+    )
+    return MinerComponentStatus(
+        status=miner_status,
+        today_collected=collection_stats.today_collected,
+        daily_target=active_target,
+        collected_total=collection_stats.collected_total,
+        last_success_at=collection_stats.last_miner_run_at,
+    )
+
+
+def _history(collection_stats: CollectionStats) -> list[HistoryPoint]:
+    return [
+        HistoryPoint(date=date, collected=collection_stats.daily_counts[date])
+        for date in sorted(collection_stats.daily_counts)[-7:]
+    ]
+
+
 def build_public_status(
     config: MinerTargetConfig,
     collection_stats: CollectionStats,
@@ -119,49 +161,22 @@ def build_public_status(
     generated_at: str,
     last_success_at: str | None,
 ) -> PublicStatus:
-    active_ids = {
-        candidate_id
-        for candidate_id, state in ledger.candidate_states.items()
-        if state.status in {"PENDING", "CLAIMED"}
-    }
-    pending_ids = active_ids | set(ledger.parked_review_candidate_ids)
-    accepted_ku_ids = {
-        row.knowledge_unit_id for row in concept_rows if row.status == "ACCEPTED"
-    }
-    active_target = effective_daily_target(config, collection_stats)
-    miner_status: ComponentStatus = (
-        "OPERATIONAL"
-        if collection_stats.today_collected >= active_target
-        else "COLLECTING"
-    )
-
-    history = [
-        HistoryPoint(date=date, collected=collection_stats.daily_counts[date])
-        for date in sorted(collection_stats.daily_counts)[-7:]
-    ]
-
     status = PublicStatus(
         generated_at=generated_at,
         timezone=config.timezone,
         summary_status="OPERATIONAL",
-        miner=MinerComponentStatus(
-            status=miner_status,
-            today_collected=collection_stats.today_collected,
-            daily_target=active_target,
-            collected_total=collection_stats.collected_total,
-            last_success_at=collection_stats.last_miner_run_at,
-        ),
+        miner=_miner_component(config, collection_stats),
         distillation=DistillationComponentStatus(
             status="OPERATIONAL",
-            pending=len(pending_ids),
+            pending=_pending_count(ledger),
             last_success_at=last_success_at,
             reason="NONE",
         ),
         corpus=CorpusComponentStatus(
             status="OPERATIONAL",
-            accepted_total=len(accepted_ku_ids),
+            accepted_total=_accepted_count(concept_rows),
         ),
-        history_7d=history,
+        history_7d=_history(collection_stats),
     )
     return validate_public_payload(status.model_dump(mode="json"))
 
@@ -251,23 +266,66 @@ def build_status_from_store(
 ) -> PublicStatus:
     from basketball_miner.distill_v3.paths import concept_index_path, ledger_path
 
+    miner = _miner_component(config, collection_stats)
+
     ledger_remote = store.read_file(ledger_path())
-    if ledger_remote is None:
-        raise RuntimeError("V3 ledger is missing")
+    if ledger_remote is None or not ledger_remote.content.strip():
+        distillation = DistillationComponentStatus(
+            status="UNAVAILABLE",
+            pending=None,
+            last_success_at=None,
+            reason="STATE_UNAVAILABLE",
+        )
+    else:
+        try:
+            ledger = DistillLedger.model_validate_json(ledger_remote.content)
+        except ValueError:
+            distillation = DistillationComponentStatus(
+                status="UNAVAILABLE",
+                pending=None,
+                last_success_at=None,
+                reason="STATE_MALFORMED",
+            )
+        else:
+            try:
+                last_success_at = _last_distillation_success_at(store)
+            except (RuntimeError, TypeError, ValueError):
+                last_success_at = None
+            distillation = DistillationComponentStatus(
+                status="OPERATIONAL",
+                pending=_pending_count(ledger),
+                last_success_at=last_success_at,
+                reason="NONE",
+            )
+
     concept_remote = store.read_file(concept_index_path())
     if concept_remote is None:
-        raise RuntimeError("V3 concept index is missing")
-    try:
-        ledger = DistillLedger.model_validate_json(ledger_remote.content)
-    except ValueError as exc:
-        raise ValueError("V3 ledger is malformed") from exc
-    concept_rows = parse_concept_index(concept_remote.content)
-    last_success_at = _last_distillation_success_at(store)
-    return build_public_status(
-        config,
-        collection_stats,
-        ledger,
-        concept_rows,
-        generated_at=generated_at,
-        last_success_at=last_success_at,
+        corpus = CorpusComponentStatus(status="UNAVAILABLE", accepted_total=None)
+    else:
+        try:
+            concept_rows = parse_concept_index(concept_remote.content)
+        except (TypeError, ValueError):
+            corpus = CorpusComponentStatus(status="UNAVAILABLE", accepted_total=None)
+        else:
+            corpus = CorpusComponentStatus(
+                status="OPERATIONAL",
+                accepted_total=_accepted_count(concept_rows),
+            )
+
+    degraded_states = {"DELAYED", "DEGRADED", "UNAVAILABLE", "UNKNOWN"}
+    summary_status: SummaryStatus = (
+        "DEGRADED"
+        if distillation.status in degraded_states or corpus.status in degraded_states
+        else "OPERATIONAL"
     )
+
+    status = PublicStatus(
+        generated_at=generated_at,
+        timezone=config.timezone,
+        summary_status=summary_status,
+        miner=miner,
+        distillation=distillation,
+        corpus=corpus,
+        history_7d=_history(collection_stats),
+    )
+    return validate_public_payload(status.model_dump(mode="json"))
