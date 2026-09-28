@@ -7,7 +7,7 @@ Supersedes only the dashboard fault-handling/UX portions of `2026-09-19-miner-da
 
 ## 1. Goal
 
-Turn the existing Miner Live dashboard into a reliable, status.openai.com-style operational page that can be opened instead of manually checking GitHub commits and workflows.
+Turn the existing Miner Live dashboard into a reliable, status-page-style operational page that can be opened instead of manually checking GitHub commits and workflows.
 
 The page must answer, at a glance:
 
@@ -155,39 +155,150 @@ The page headline maps these to simple Korean copy:
 - `PARTIAL_OUTAGE` -> `일부 시스템 장애`
 - `STALE` -> `상태 갱신 지연`
 
-## 7. Dashboard UX
+## 7. Dashboard UX — OpenAI Status-inspired information architecture
 
-Keep the existing static GitHub Pages implementation, but change the layout to component-oriented status.
+Reference interaction pattern: the current OpenAI Status page leads with one prominent overall-state message, then presents a `System status` section with service rows and a separate history path. Miner Status should use the same scanning model without copying OpenAI branding, text, exact spacing, or proprietary assets.
 
-Top:
+### 7.1 Visual direction
 
-- large overall status line and dot;
-- last refreshed time.
+- light, neutral background;
+- centered content column around 820–900 px on desktop;
+- generous whitespace and thin neutral borders;
+- system font stack, restrained typography, no gradients or glass effects;
+- green / amber / red / gray used only for state communication;
+- rounded cards with subtle radius, not oversized dashboard tiles;
+- mobile-first single-column collapse with no horizontal scrolling.
 
-Components:
+### 7.2 Header
 
-1. **Miner**
-   - status badge;
-   - `오늘 수집 1,659 / 1,659`;
-   - cumulative collected total;
-   - last successful collection.
+Left:
 
-2. **Distillation**
-   - status badge;
-   - pending count or `확인 불가`;
-   - last verified distillation success;
-   - safe reason label when unavailable/delayed.
+- `HoopHub Status` wordmark/text only.
 
-3. **Corpus**
-   - status badge;
-   - accepted durable knowledge-unit count or `확인 불가`.
+Right:
 
-Below components:
+- compact `새로고침` action;
+- optional `History` link once history view exists.
 
-- 7-day collection history;
-- no candidate titles, IDs, URLs, DOI, authors, summaries, queue IDs, or private paths.
+Do not add a notification-subscription system in Phase 1.
 
-Mobile view must show the three components without horizontal scrolling.
+### 7.3 Overall status banner
+
+Directly below the header, show one large bordered status panel similar in purpose to the top OpenAI Status message.
+
+Operational example:
+
+- green check icon;
+- `정상 운영 중`;
+- secondary copy: `Miner 및 확인 가능한 처리 시스템이 정상입니다.`
+
+Degraded example:
+
+- amber indicator;
+- `일부 처리 지연`;
+- secondary copy: `Miner 수집은 정상이며 Distillation 상태를 확인할 수 없습니다.`
+
+The banner must never call the entire system healthy when one required component is unknown/unavailable.
+
+### 7.4 System status panel
+
+Below the overall banner, show a single `System status` card containing three service rows rather than three unrelated large metric cards.
+
+#### Miner row
+
+Primary line:
+
+- green/amber/red state icon;
+- `Miner`;
+- right-aligned state label such as `Operational` or `Collecting`.
+
+Secondary line:
+
+- `오늘 1,659 / 1,659`;
+- `누적 10,284`;
+- `마지막 수집 01:56`.
+
+Visual history:
+
+- show seven compact day segments based only on authoritative collection-day data;
+- green when target reached;
+- amber when positive but below target;
+- gray when no verified value exists;
+- never infer outage from missing historical detail.
+
+#### Distillation row
+
+Primary line:
+
+- state icon;
+- `Distillation`;
+- right-aligned `Operational`, `Delayed`, or `Unavailable`.
+
+Secondary line:
+
+- `대기 N개` when verified;
+- `대기 확인 불가` when ledger unavailable;
+- `마지막 성공 <time>` when known.
+
+If unavailable/delayed, row can expand or show a compact incident-style message beneath it using only safe reason text, for example `상태 파일을 확인할 수 없습니다.`
+
+Do not fabricate historical uptime bars for Distillation until historical component status is actually persisted.
+
+#### Corpus row
+
+Primary line:
+
+- state icon;
+- `Corpus`;
+- right-aligned status.
+
+Secondary line:
+
+- `승인된 KU N개` when verified;
+- `확인 불가` otherwise.
+
+Do not fabricate historical uptime bars for Corpus until historical component status is actually persisted.
+
+### 7.5 History area
+
+Below `System status`, provide a restrained history section inspired by the separate history affordance on OpenAI Status.
+
+Phase 1:
+
+- `최근 7일 수집 기록`;
+- one compact row per day or simple segmented bar;
+- date + collected count + target result;
+- no chart library.
+
+Later Phase 2 may expand to 30/90-day component history once trustworthy component-history data exists.
+
+### 7.6 Incident presentation
+
+When `summary_status != OPERATIONAL`, show a small incident-style card between the overall banner and system rows.
+
+Examples:
+
+- `Distillation 상태 확인 불가`
+- `마지막 확인 가능한 증류 성공: 9월 22일`
+- state badge such as `Investigating`, `Delayed`, or `Unavailable` mapped from safe internal enums.
+
+No stack trace, exception text, repository path, candidate ID, URL, DOI, or private file name is exposed.
+
+### 7.7 Footer
+
+Use a short muted note:
+
+- `집계 상태만 공개됩니다. 후보 원문과 식별 정보는 비공개입니다.`
+- `마지막 갱신 <time>`.
+
+### 7.8 Accessibility / interaction
+
+- status must never rely on color alone; pair color with icon + text;
+- semantic headings and `<section>` labels;
+- buttons at least 44 px touch target on mobile;
+- `aria-live=polite` for refreshed summary state;
+- 60-second browser refresh remains, with a visible manual refresh action;
+- if `status.json` refresh fails, keep the last successfully rendered values and mark the page `STALE` instead of clearing numbers.
 
 ## 8. Runtime / Runner Health
 
@@ -225,6 +336,8 @@ Add tests proving:
 - public payload rejects unexpected/private fields;
 - summary status becomes `DEGRADED` for distillation failure with healthy Miner;
 - dashboard renders `확인 불가` for nullable values;
+- dashboard keeps last known values and marks `STALE` when refresh fails;
+- dashboard uses component rows and overall status banner;
 - dashboard remains same-origin only;
 - existing quota/dedup/collection tests remain green.
 
@@ -236,3 +349,4 @@ Add tests proving:
 - No new database.
 - No authentication layer for the public aggregate page.
 - No automatic repair or restart of the local distiller from the public page.
+- No pixel-for-pixel clone of OpenAI Status; use the same operational-status information hierarchy with HoopHub-specific content and styling.
