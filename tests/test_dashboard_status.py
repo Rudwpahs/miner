@@ -182,23 +182,82 @@ def test_parse_concept_index_rejects_unknown_status():
         parse_concept_index(b'{"knowledge_unit_id":"KU-1","status":"UNKNOWN"}\n')
 
 
-def test_missing_ledger_still_fails_until_fault_isolation_task():
+def test_empty_ledger_degrades_distillation_without_hiding_miner_or_corpus():
     from basketball_miner.dashboard_status import build_status_from_store
+
+    class Remote:
+        def __init__(self, content):
+            self.content = content
+            self.sha = "0" * 40
 
     class Store:
         def read_file(self, path):
+            if path.endswith("distill.json"):
+                return Remote(b"")
+            if path.endswith("concept_index.jsonl"):
+                return Remote(b'{"knowledge_unit_id":"KU-1","status":"ACCEPTED"}\n')
             return None
 
         def list_dir(self, path):
             return []
 
-    with pytest.raises(RuntimeError, match="ledger"):
-        build_status_from_store(
-            base_config(),
-            base_stats(),
-            Store(),
-            generated_at="2026-09-19T18:01:00+09:00",
-        )
+    status = build_status_from_store(
+        base_config(),
+        base_stats(),
+        Store(),
+        generated_at="2026-09-19T18:01:00+09:00",
+    )
+    assert status.miner.today_collected == 100
+    assert status.distillation.status == "UNAVAILABLE"
+    assert status.distillation.pending is None
+    assert status.distillation.reason == "STATE_UNAVAILABLE"
+    assert status.corpus.status == "OPERATIONAL"
+    assert status.corpus.accepted_total == 1
+    assert status.summary_status == "DEGRADED"
+
+
+def test_malformed_concept_index_only_degrades_corpus():
+    from basketball_miner.dashboard_status import build_status_from_store
+
+    class Remote:
+        def __init__(self, content):
+            self.content = content
+            self.sha = "0" * 40
+
+    ledger_payload = {
+        "processed_blob_shas": [],
+        "processed_staging_shas": [],
+        "completed_batch_ids": [],
+        "parked_review_candidate_ids": [],
+        "terminal_candidate_ids": [],
+        "review_candidate_ids": [],
+        "normalized_source_keys": [],
+        "canonical_hashes": [],
+        "candidate_states": {},
+    }
+
+    class Store:
+        def read_file(self, path):
+            if path.endswith("distill.json"):
+                return Remote(json.dumps(ledger_payload).encode())
+            if path.endswith("concept_index.jsonl"):
+                return Remote(b"not-json\n")
+            return None
+
+        def list_dir(self, path):
+            return []
+
+    status = build_status_from_store(
+        base_config(),
+        base_stats(),
+        Store(),
+        generated_at="2026-09-19T18:01:00+09:00",
+    )
+    assert status.distillation.status == "OPERATIONAL"
+    assert status.distillation.pending == 0
+    assert status.corpus.status == "UNAVAILABLE"
+    assert status.corpus.accepted_total is None
+    assert status.summary_status == "DEGRADED"
 
 
 def test_build_status_reads_private_state_and_latest_success():
