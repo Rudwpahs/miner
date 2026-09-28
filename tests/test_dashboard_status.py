@@ -55,7 +55,7 @@ def test_pending_is_active_union_parked_review():
         ledger,
         [],
         generated_at="2026-09-19T18:01:00+09:00",
-        last_success_at=None,
+        last_success_at="2026-09-19T17:00:00+09:00",
     )
     assert status.distillation.pending == 2
     assert status.distillation.status == "OPERATIONAL"
@@ -89,6 +89,48 @@ def test_target_reached_marks_miner_operational():
         last_success_at=None,
     )
     assert status.miner.status == "OPERATIONAL"
+
+
+def test_stale_miner_below_target_is_delayed():
+    stats = base_stats().model_copy(
+        update={"last_miner_run_at": "2026-09-19T15:00:00+09:00"}
+    )
+    status = build_public_status(
+        base_config(),
+        stats,
+        DistillLedger(),
+        [],
+        generated_at="2026-09-19T18:01:00+09:00",
+        last_success_at=None,
+    )
+    assert status.miner.status == "DELAYED"
+    assert status.summary_status == "DEGRADED"
+
+
+def test_pending_distillation_without_recent_success_is_delayed():
+    ledger = DistillLedger(
+        candidate_states={
+            "CAND-1111111111111111": CandidateStageState(
+                candidate_id="CAND-1111111111111111",
+                source_fingerprint="1" * 64,
+                source_type="academic",
+                stage="TRIAGE",
+                status="PENDING",
+                updated_at="2026-09-19T00:00:00Z",
+            )
+        }
+    )
+    status = build_public_status(
+        base_config(),
+        base_stats(),
+        ledger,
+        [],
+        generated_at="2026-09-19T18:01:00+09:00",
+        last_success_at="2026-09-19T10:00:00+09:00",
+    )
+    assert status.distillation.status == "DELAYED"
+    assert status.distillation.reason == "NO_RECENT_SUCCESS"
+    assert status.summary_status == "DEGRADED"
 
 
 def test_dashboard_uses_burst_target_while_burst_is_active():
