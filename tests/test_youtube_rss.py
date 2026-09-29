@@ -7,6 +7,7 @@ from basketball_miner.models import Checkpoint
 from basketball_miner.sources.youtube_rss import (
     YouTubeRssAdapter,
     load_channel_ids,
+    load_collect_all_channel_ids,
     load_legacy_users,
 )
 
@@ -22,7 +23,12 @@ def test_load_channel_ids_reads_only_allowlisted_ids():
         "UC9vie9VZdTqsxu4_H8asuPw",
         "UCDP7U_0S1zP3AiNqCO6ejuQ",
         "UC0EVRyv6lA6xs-QtFsKqexg",
+        "UCe1Ka1W1V_TfRSwE_luacEg",
     )
+
+
+def test_load_collect_all_channel_ids_reads_vision_driven_basketball():
+    assert load_collect_all_channel_ids(CONFIG) == ("UCe1Ka1W1V_TfRSwE_luacEg",)
 
 
 def test_load_legacy_users_reads_the_hoop_doctors():
@@ -72,6 +78,39 @@ def test_youtube_rss_maps_coaching_and_interview_without_transcript():
     payload = json.dumps([record.model_dump(mode="json") for record in batch.records])
     assert "transcript" not in payload.lower()
     assert "video_bytes" not in payload.lower()
+
+
+def test_youtube_rss_collect_all_keeps_neutral_title_for_selected_channel():
+    channel_id = "UCe1Ka1W1V_TfRSwE_luacEg"
+    xml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/">
+  <entry>
+    <yt:videoId>vision123</yt:videoId>
+    <yt:channelId>{channel_id}</yt:channelId>
+    <title>3 Things I Wish I Knew Earlier</title>
+    <author><name>Vision Driven Basketball</name></author>
+    <published>2026-09-29T00:00:00+00:00</published>
+    <media:group><media:description>Basketball development lesson.</media:description></media:group>
+  </entry>
+</feed>'''
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=xml)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    filtered = YouTubeRssAdapter(channel_ids=(channel_id,), client=client)
+    collected = YouTubeRssAdapter(
+        channel_ids=(channel_id,),
+        collect_all_channel_ids=(channel_id,),
+        client=client,
+    )
+
+    filtered_batch = filtered.fetch(Checkpoint(adapter="youtube_rss"), limit=10)
+    collected_batch = collected.fetch(Checkpoint(adapter="youtube_rss"), limit=10)
+
+    assert filtered_batch.records == []
+    assert [record.stable_id for record in collected_batch.records] == ["vision123"]
+    assert collected_batch.records[0].source_type == "coaching"
 
 
 def test_youtube_rss_skips_failed_channel_and_continues_to_next():
