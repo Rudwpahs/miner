@@ -26,6 +26,7 @@ from basketball_miner.sources.crossref import CrossrefAdapter
 from basketball_miner.sources.youtube_rss import (
     YouTubeRssAdapter,
     load_channel_ids,
+    load_collect_all_channel_ids,
     load_legacy_users,
 )
 from basketball_miner.state import load_checkpoint, save_checkpoint
@@ -114,6 +115,7 @@ def _build_adapters(youtube_config: Path):
         YouTubeRssAdapter(
             load_channel_ids(youtube_config),
             legacy_users=load_legacy_users(youtube_config),
+            collect_all_channel_ids=load_collect_all_channel_ids(youtube_config),
         ),
     ]
 
