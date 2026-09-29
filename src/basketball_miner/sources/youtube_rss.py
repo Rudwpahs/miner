@@ -63,6 +63,17 @@ def load_channel_ids(path: Path) -> tuple[str, ...]:
     return tuple(ids)
 
 
+def load_collect_all_channel_ids(path: Path) -> tuple[str, ...]:
+    ids: list[str] = []
+    for item in _load_allowlist(path):
+        channel_id = str(item.get("channel_id", "")).strip()
+        if channel_id and item.get("collect_all") is True:
+            if not channel_id.startswith("UC"):
+                raise ValueError("youtube channel_id must start with UC")
+            ids.append(channel_id)
+    return tuple(ids)
+
+
 def load_legacy_users(path: Path) -> tuple[str, ...]:
     users: list[str] = []
     for item in _load_allowlist(path):
@@ -82,9 +93,11 @@ class YouTubeRssAdapter:
         client: httpx.Client | None = None,
         *,
         legacy_users: tuple[str, ...] = (),
+        collect_all_channel_ids: tuple[str, ...] = (),
     ) -> None:
         self.channel_ids = channel_ids
         self.legacy_users = legacy_users
+        self.collect_all_channel_ids = frozenset(collect_all_channel_ids)
         self.client = client or httpx.Client(timeout=10.0, follow_redirects=True)
 
     def fetch(self, checkpoint: Checkpoint, limit: int) -> AdapterBatch:
@@ -131,7 +144,11 @@ class YouTubeRssAdapter:
                 if len(records) >= limit:
                     break
                 try:
-                    record = self._record_from_entry(entry, expected_channel_id)
+                    record = self._record_from_entry(
+                        entry,
+                        expected_channel_id,
+                        collect_all=expected_channel_id in self.collect_all_channel_ids,
+                    )
                 except (TypeError, ValueError):
                     errors += 1
                     continue
@@ -156,6 +173,8 @@ class YouTubeRssAdapter:
     def _record_from_entry(
         entry: ET.Element,
         expected_channel_id: str | None,
+        *,
+        collect_all: bool = False,
     ) -> SourceRecord | None:
         video_id = (entry.findtext(f"{_YT}videoId") or "").strip()
         channel_id = (entry.findtext(f"{_YT}channelId") or "").strip()
@@ -173,7 +192,9 @@ class YouTubeRssAdapter:
 
         source_type = YouTubeRssAdapter._source_type(title)
         if source_type is None:
-            return None
+            if not collect_all:
+                return None
+            source_type = "coaching"
 
         return SourceRecord(
             adapter="youtube_rss",
