@@ -26,7 +26,8 @@
     },
     {
       "channel_id": "UCe1Ka1W1V_TfRSwE_luacEg",
-      "label": "Vision Driven Basketball"
+      "label": "Vision Driven Basketball",
+      "collect_all": true
     }
   ]
 }
