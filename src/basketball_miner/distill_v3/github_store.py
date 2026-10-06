@@ -9,6 +9,10 @@ import httpx
 
 from .paths import assert_v3_write_path
 
+# Only the target's checkpoint publisher writes its main branch. Reading main
+# stays allowed; every write (create_immutable, update_mutable) goes through _put.
+_FORBIDDEN_WRITE_BRANCHES = frozenset({"main", "master"})
+
 
 @dataclass(frozen=True)
 class RemoteFile:
@@ -151,6 +155,8 @@ class GitHubV3Store:
     ) -> str | None:
         if not message.strip():
             raise ValueError("message must not be empty")
+        if self.branch.removeprefix("refs/heads/") in _FORBIDDEN_WRITE_BRANCHES:
+            raise PermissionError("V3 store must not write the target's main branch")
         body: dict[str, str] = {
             "message": message,
             "content": base64.b64encode(content).decode("ascii"),

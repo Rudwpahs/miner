@@ -39,7 +39,7 @@ def test_export_puts_base64_jsonl_to_private_inbox():
     client = httpx.Client(transport=httpx.MockTransport(handler))
     sink = GitHubPrivateRepoSink(
         repo="Rudwpahs/shooting-profile-coach-ios",
-        branch="main",
+        branch="miner-inbox",
         token="test-secret-token",
         client=client,
         now_fn=lambda: datetime(2026, 9, 11, tzinfo=UTC),
@@ -61,7 +61,7 @@ def test_export_puts_base64_jsonl_to_private_inbox():
     rows = [json.loads(line) for line in decoded.splitlines()]
     assert len(rows) == 1
     assert rows[0]["candidate_id"] == "CAND-0123456789abcdef"
-    assert body["branch"] == "main"
+    assert body["branch"] == "miner-inbox"
     assert receipt.count == 1
     assert receipt.commit_sha == "abc123"
 
@@ -77,7 +77,7 @@ def test_export_rejects_empty_batch_without_network_call():
     client = httpx.Client(transport=httpx.MockTransport(handler))
     sink = GitHubPrivateRepoSink(
         repo="Rudwpahs/shooting-profile-coach-ios",
-        branch="main",
+        branch="miner-inbox",
         token="test-secret-token",
         client=client,
     )
@@ -104,3 +104,27 @@ def test_private_repo_preflight_refuses_public_target_without_leaking_token():
         assert token not in str(exc)
     else:
         raise AssertionError("public target must be rejected")
+
+
+def test_export_refuses_to_write_the_target_main_branch():
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(201, json={})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    for branch in ("main", " main ", "refs/heads/main", "master"):
+        try:
+            GitHubPrivateRepoSink(
+                repo="Rudwpahs/hoopDB",
+                branch=branch,
+                token="test-secret-token",
+                client=client,
+            )
+        except ValueError as exc:
+            assert "never main" in str(exc)
+        else:
+            raise AssertionError(f"export to {branch!r} must be rejected")
+    assert calls == 0

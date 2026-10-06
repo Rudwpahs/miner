@@ -62,3 +62,16 @@ python -m ruff check src tests scripts
 ```
 
 `tests/test_end_to_end_dry_run.py` exercises Crossref plus YouTube using local fixtures and `httpx.MockTransport`, so the end-to-end verification does not depend on external network access. `tests/test_workflow_policy.py` enforces the three-hour schedule, read-only routine CI, pinned third-party actions, and absence of `pull_request_target`.
+
+## Target branch
+
+The miner never writes the target repository's `main`. `mine.yml` exports to the
+`miner-inbox` branch of `Rudwpahs/hoopDB` (`HOOPHUB_TARGET_BRANCH`), and
+`GitHubPrivateRepoSink` and every write of `GitHubV3Store` refuse `main`, so going
+back to `main` takes a code revert, not a variable. `distill_v3_prepare.yml` still
+passes `--branch main` and therefore cannot write; keep it disabled. hoopDB's
+distillation workflow copies new
+`ml/coach/miner-data/inbox/YYYY/MM/DD/*.jsonl` files from that branch into its own
+checkpoint commit (hoopDB `docs/v3-supervisor.md`, "Single writer"). The same
+branch is read back for the daily collection statistics, so it must be created
+from hoopDB `main` and must never be deleted, reset or force-pushed.

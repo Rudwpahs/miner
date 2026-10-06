@@ -39,7 +39,7 @@ def test_export_failures_never_leak_token_or_candidate_payload():
         )
         sink = GitHubPrivateRepoSink(
             repo="Rudwpahs/shooting-profile-coach-ios",
-            branch="main",
+            branch="miner-inbox",
             token=token,
             client=client,
         )

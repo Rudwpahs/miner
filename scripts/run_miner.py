@@ -158,7 +158,7 @@ def main() -> int:
         "HOOPHUB_TARGET_REPO",
         "Rudwpahs/shooting-profile-coach-ios",
     )
-    target_branch = os.environ.get("HOOPHUB_TARGET_BRANCH", "main")
+    target_branch = os.environ.get("HOOPHUB_TARGET_BRANCH", "miner-inbox")
 
     config = load_target_config(args.target_config)
     now = datetime.now(ZoneInfo(config.timezone))
