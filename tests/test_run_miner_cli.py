@@ -52,7 +52,7 @@ def patch_adapters(module, monkeypatch):
     monkeypatch.setattr(
         module,
         "YouTubeRssAdapter",
-        lambda ids, *, legacy_users=(): (ids, legacy_users),
+        lambda ids, *, legacy_users=(), collect_all_channel_ids=(): (ids, legacy_users),
     )
     monkeypatch.setattr(module, "CrossrefIdentityVerifier", lambda: object())
 
@@ -151,7 +151,7 @@ def test_build_adapters_includes_legacy_youtube_user(tmp_path, monkeypatch):
     captured = {}
 
     class FakeYouTube:
-        def __init__(self, ids, *, legacy_users=()):
+        def __init__(self, ids, *, legacy_users=(), collect_all_channel_ids=()):
             captured["ids"] = ids
             captured["legacy_users"] = legacy_users
 

@@ -132,3 +132,13 @@ def test_public_workflows_have_no_self_hosted_gpu_execution():
     assert "cuda" not in combined.casefold()
     assert "formquant" not in combined.casefold()
     assert "qlora" not in combined.casefold()
+
+
+def test_miner_exports_to_the_ingestion_branch_never_to_target_main():
+    text = _workflow_text(MINE_WORKFLOW)
+    assert "HOOPHUB_TARGET_REPO: Rudwpahs/hoopDB" in text
+    assert text.count("HOOPHUB_TARGET_BRANCH:") == 1
+    assert "HOOPHUB_TARGET_BRANCH: miner-inbox" in text
+    script = (ROOT / "scripts" / "run_miner.py").read_text(encoding="utf-8")
+    assert 'os.environ.get("HOOPHUB_TARGET_BRANCH", "miner-inbox")' in script
+    assert 'os.environ.get("HOOPHUB_TARGET_BRANCH", "main")' not in script

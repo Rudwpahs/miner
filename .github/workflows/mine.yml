@@ -55,7 +55,7 @@ jobs:
         env:
           HOOPHUB_MINER_TOKEN: ${{ secrets.HOOPHUB_MINER_TOKEN }}
           HOOPHUB_TARGET_REPO: Rudwpahs/hoopDB
-          HOOPHUB_TARGET_BRANCH: main
+          HOOPHUB_TARGET_BRANCH: miner-inbox
           MANUAL_EXPORT: ${{ inputs.export }}
           EVENT_NAME: ${{ github.event_name }}
         run: |

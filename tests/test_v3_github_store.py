@@ -7,10 +7,10 @@ import pytest
 from basketball_miner.distill_v3.github_store import GitHubV3Store
 
 
-def make_store(handler) -> GitHubV3Store:
+def make_store(handler, branch: str = "main") -> GitHubV3Store:
     return GitHubV3Store(
         repo="Rudwpahs/hoopDB",
-        branch="main",
+        branch=branch,
         token="secret-token",
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
@@ -113,7 +113,7 @@ def test_create_immutable_creates_absent_file_without_sha():
         assert base64.b64decode(body["content"]) == b"same\n"
         return httpx.Response(201, json={"commit": {"sha": "c" * 40}})
 
-    commit_sha = make_store(handler).create_immutable(
+    commit_sha = make_store(handler, branch="v3-staging").create_immutable(
         "ml/coach/miner-data/v3/queues/triage/V3-TRIAGE-0123456789ab.json",
         b"same\n",
         "v3: queue batch",
@@ -191,7 +191,7 @@ def test_update_mutable_requires_observed_sha_and_includes_it_in_put():
         assert body["sha"] == "a" * 40
         return httpx.Response(200, json={"commit": {"sha": "b" * 40}})
 
-    result = make_store(handler).update_mutable(
+    result = make_store(handler, branch="v3-staging").update_mutable(
         "ml/coach/miner-data/v3/ledgers/distill.json",
         b"new\n",
         expected_sha="a" * 40,

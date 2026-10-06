@@ -12,6 +12,9 @@ import httpx
 from basketball_miner.models import CandidateRecord
 
 _BATCH_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,120}$")
+# Only the target's checkpoint publisher writes its main branch. An inbox commit
+# on main during a distillation run makes that run's checkpoint push refuse.
+_FORBIDDEN_EXPORT_BRANCHES = frozenset({"main", "master"})
 
 
 class ExportError(RuntimeError):
@@ -70,10 +73,12 @@ class GitHubPrivateRepoSink:
             raise ValueError("repo must use owner/name form")
         if not branch.strip():
             raise ValueError("branch must not be empty")
+        if branch.strip().removeprefix("refs/heads/") in _FORBIDDEN_EXPORT_BRANCHES:
+            raise ValueError("inbox export must target the ingestion branch, never main")
         if not token:
             raise ValueError("token must not be empty")
         self.repo = repo
-        self.branch = branch
+        self.branch = branch.strip()
         self._token = token
         self.client = client or httpx.Client(timeout=15.0, follow_redirects=False)
         self._now_fn = now_fn or (lambda: datetime.now(UTC))
