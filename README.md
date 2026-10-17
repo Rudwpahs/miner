@@ -26,7 +26,7 @@
 ### V1 sources
 
 - Crossref 학술 메타데이터
-- 명시적으로 허용한 YouTube 코칭 / 전문가 채널
+- 메타데이터 수집을 허용한 YouTube 코칭 / 전문가 채널 (수집 허가 목록일 뿐이며, 영상·자막·음성 이용 허락이 아닙니다)
 - 같은 provenance·rate-limit·fixture 검증을 통과한 추가 공식/API 소스
 
 ### Explicitly out of scope
