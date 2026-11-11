@@ -2,9 +2,9 @@
 
 ## Runtime model
 
-`mine.yml` is the only workflow that is allowed to receive the downstream export credential. It runs on the default branch every three hours at minute 17 and can also be started manually. Routine pull-request CI uses `test.yml`, has read-only repository permission, and never receives the export secret.
+`mine.yml` is the only workflow that is allowed to receive the downstream export credential. It runs on the default branch at minutes 7, 27 and 47 of every hour (about every 20 minutes, three runs per hour) and can also be started manually. Routine pull-request CI uses `test.yml`, has read-only repository permission, and never receives the export secret.
 
-The miner inspects at most 500 records per run. Source adapters normalize metadata, deterministic relevance rules reject unrelated material, fingerprints remove obvious duplicates, and only relevance-passed `CandidateRecord` objects reach the export sink. This collector does not assign final FormPath evidence grades and does not promote anything into the canonical RU corpus.
+A scheduled run uses `--until-target` in chunks and has no fixed record budget. A manual run with export disabled uses `--budget 20000` (the workflow value). Both paths are bounded by the source adapters and the job time limit. Source adapters normalize metadata, deterministic relevance rules reject unrelated material, fingerprints remove obvious duplicates, and only relevance-passed `CandidateRecord` objects reach the export sink. This collector does not assign final FormPath evidence grades and does not promote anything into the canonical RU corpus.
 
 ## Public/private boundary
 
@@ -28,9 +28,11 @@ The `miner-state` branch is intentionally separate from application code. Only t
 state/crossref.json
 state/youtube_rss.json
 state/seen_hashes.jsonl
+state/seen_crossref_dois.jsonl
+state/collection_stats.json
 ```
 
-The mining job reads the state, performs collection/export, and writes `_state_next`. A separate `persist-state` job receives only that three-file artifact and has `contents: write` permission. If export fails, the mining job fails before the state artifact is uploaded, so the checkpoint is not advanced.
+The mining job reads the state, performs collection/export, and writes `_state_next`. A separate `persist-state` job receives only that five-file artifact and has `contents: write` permission. If export fails, the mining job fails before the state artifact is uploaded, so the checkpoint is not advanced.
 
 Do not add candidate titles, URLs, abstracts, transcripts, tokens, or other source payloads to `miner-state`.
 

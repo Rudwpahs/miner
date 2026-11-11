@@ -26,7 +26,7 @@
 ### V1 sources
 
 - Crossref 학술 메타데이터
-- 명시적으로 허용한 YouTube 코칭 / 전문가 채널
+- 메타데이터 수집을 허용한 YouTube 코칭 / 전문가 채널 (수집 허가 목록일 뿐이며, 영상·자막·음성 이용 허락이 아닙니다)
 - 같은 provenance·rate-limit·fixture 검증을 통과한 추가 공식/API 소스
 - 이미 수집한 SHOOTING YouTube 영상의 자막 중 슈팅 동작 문장만 뽑은 발췌(`youtube_transcript`, 전문가 의견으로 표시, 최대 1,200자). YouTube가 클라우드 IP를 막으므로 이 단계만 소유자 PC에서 `scripts/run_transcript_excerpts.py`로 실행합니다. 전체 자막은 저장하지 않습니다.
 
