@@ -57,6 +57,32 @@ def test_excerpt_needs_at_least_two_mechanics_sentences():
     assert extract_excerpt("") is None
 
 
+FILLER = "so we are going to work on this today and talk about what matters most "
+
+
+def test_unpunctuated_auto_captions_are_cut_into_word_windows():
+    transcript = (
+        FILLER * 10
+        + "keep your guide hand on the side of the ball and let your wrist snap through "
+        + FILLER * 10
+        + "now bend your knees and use your legs for power "
+        + FILLER * 10
+    )
+    assert "." not in transcript
+    excerpt = extract_excerpt(transcript)
+    assert excerpt is not None
+    assert "guide hand on the side of the ball" in excerpt
+    assert "bend your knees" in excerpt
+    assert len(excerpt) <= 1200
+    assert excerpt.endswith(".")
+
+
+def test_punctuated_captions_keep_sentence_splitting():
+    excerpt = extract_excerpt(TRANSCRIPT)
+    assert excerpt is not None
+    assert excerpt.startswith("Your guide hand isn't supposed to shoot the basketball.")
+
+
 def test_excerpt_stays_within_the_inbox_summary_limit():
     long = " ".join(f"Your elbow should stay under the ball on shot number {i}." for i in range(200))
     excerpt = extract_excerpt(long)

@@ -83,6 +83,12 @@ def load_legacy_users(path: Path) -> tuple[str, ...]:
     return tuple(users)
 
 
+def _cursor_index(cursor: str | None, source_count: int) -> int:
+    if not source_count or cursor is None or not cursor.isdigit():
+        return 0
+    return int(cursor) % source_count
+
+
 class YouTubeRssAdapter:
     name = "youtube_rss"
     endpoint = "https://www.youtube.com/feeds/videos.xml"
@@ -112,10 +118,17 @@ class YouTubeRssAdapter:
         sources = [
             ("channel_id", channel_id, channel_id) for channel_id in self.channel_ids
         ] + [("user", user, None) for user in self.legacy_users]
+        # Each run starts where the previous one was cut off by the limit, so channels late in the
+        # allowlist are not starved by the ones before them.
+        start = _cursor_index(checkpoint.cursor, len(sources))
+        next_start = start
 
-        for param_name, source_value, expected_channel_id in sources:
+        for offset in range(len(sources)):
+            position = (start + offset) % len(sources)
             if len(records) >= limit:
+                next_start = position
                 break
+            param_name, source_value, expected_channel_id = sources[position]
             response = self.client.get(self.endpoint, params={param_name: source_value})
             if response.status_code == 429:
                 return AdapterBatch(
@@ -140,8 +153,10 @@ class YouTubeRssAdapter:
 
             entries = root.findall(f"{_ATOM}entry")
             raw_count += len(entries)
+            cut_off = False
             for entry in entries:
                 if len(records) >= limit:
+                    cut_off = True
                     break
                 try:
                     record = self._record_from_entry(
@@ -154,11 +169,14 @@ class YouTubeRssAdapter:
                     continue
                 if record is not None:
                     records.append(record)
+            if cut_off:
+                next_start = position
+                break
 
         next_checkpoint = Checkpoint(
             adapter=self.name,
             last_checked_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-            cursor=checkpoint.cursor,
+            cursor=str(next_start) if sources else checkpoint.cursor,
             last_stable_id_hash=checkpoint.last_stable_id_hash,
         )
         return AdapterBatch(
