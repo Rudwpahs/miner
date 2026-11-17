@@ -28,6 +28,16 @@
       "channel_id": "UCe1Ka1W1V_TfRSwE_luacEg",
       "label": "Vision Driven Basketball",
       "collect_all": true
+    },
+    {
+      "channel_id": "UCXrvAIp3vLwn0sGa4xf6Tyw",
+      "label": "Shot Science Basketball",
+      "collect_all": true
+    },
+    {
+      "channel_id": "UCqjq2Zq6QUwpDR45Ns89YDw",
+      "label": "ShotMechanics",
+      "collect_all": true
     }
   ]
 }

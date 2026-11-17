@@ -39,8 +39,22 @@ _SPACE = re.compile(r"\s+")
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
 
 
+_TERMINATOR = re.compile(r"[.!?]")
+# Auto-generated captions of long streams often carry almost no punctuation; below one sentence end
+# per this many words the transcript is cut into fixed word windows instead of sentences.
+_WORDS_PER_TERMINATOR = 100
+WINDOW_WORDS = 24
+
+
 def _clean(text: str) -> str:
     return _SPACE.sub(" ", _NOISE.sub(" ", text)).strip()
+
+
+def _sentences(text: str) -> list[str]:
+    words = text.split()
+    if len(_TERMINATOR.findall(text)) * _WORDS_PER_TERMINATOR >= len(words):
+        return _SENTENCE.split(text)
+    return [" ".join(words[i : i + WINDOW_WORDS]) for i in range(0, len(words), WINDOW_WORDS)]
 
 
 def extract_excerpt(transcript: str, limit: int = SUMMARY_LIMIT) -> str | None:
@@ -48,7 +62,7 @@ def extract_excerpt(transcript: str, limit: int = SUMMARY_LIMIT) -> str | None:
     kept: list[str] = []
     seen: set[str] = set()
     length = 0
-    for sentence in _SENTENCE.split(_clean(transcript)):
+    for sentence in _sentences(_clean(transcript)):
         sentence = sentence.strip()
         if not sentence or not _MECHANICS.search(sentence):
             continue
