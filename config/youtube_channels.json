@@ -38,6 +38,16 @@
       "channel_id": "UCqjq2Zq6QUwpDR45Ns89YDw",
       "label": "ShotMechanics",
       "collect_all": true
+    },
+    {
+      "channel_id": "UCspHEavqXfrWe2YFps_4RiQ",
+      "label": "Coach Dave Love",
+      "collect_all": true
+    },
+    {
+      "channel_id": "UCgP1mu1UXba9r2owhCHo--g",
+      "label": "ILoveBasketballTV",
+      "collect_all": true
     }
   ]
 }
