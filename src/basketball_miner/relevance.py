@@ -15,6 +15,8 @@ _ANCHORS = (
     "closeout",
 )
 
+_ALLOWLISTED_CHANNEL = "allowlisted basketball channel"
+
 _TOPIC_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "SHOOTING",
@@ -56,6 +58,10 @@ class RelevanceResult:
 def classify_relevance(record: SourceRecord) -> RelevanceResult:
     text = " ".join(part for part in (record.title, record.summary or "") if part).casefold()
     anchors = tuple(anchor for anchor in _ANCHORS if anchor in text)
+    if not anchors and record.adapter == "youtube_rss":
+        # Every youtube_rss record comes from an explicitly allowlisted basketball channel, whose
+        # titles ("Why Your Shot Drifts...") rarely repeat the word basketball.
+        anchors = (_ALLOWLISTED_CHANNEL,)
     if not anchors:
         return RelevanceResult(relevant=False)
 

@@ -2,9 +2,9 @@ from basketball_miner.models import SourceRecord
 from basketball_miner.relevance import classify_relevance
 
 
-def make_source(title: str, summary: str | None = None) -> SourceRecord:
+def make_source(title: str, summary: str | None = None, adapter: str = "test") -> SourceRecord:
     return SourceRecord(
-        adapter="test",
+        adapter=adapter,
         source_type="academic",
         stable_id=title,
         url="https://example.org/item",
@@ -44,3 +44,22 @@ def test_relevance_rejects_unrelated_material():
         "Large language model inference optimization",
     )
     assert all(not classify_relevance(make_source(title)).relevant for title in negatives)
+
+
+def test_allowlisted_youtube_channel_counts_as_basketball_without_the_word():
+    # Coaching channels on the allowlist rarely say "basketball" in a title like this one.
+    result = classify_relevance(
+        make_source("Your Guide Hand Is Ruining Your Fadeaway... Fix It!", adapter="youtube_rss")
+    )
+    assert result.relevant is True
+    assert result.signals == ("allowlisted basketball channel",)
+
+
+def test_allowlisted_youtube_title_still_maps_shooting_topics():
+    result = classify_relevance(make_source("Why Your Shot Drifts and Falls Short...", adapter="youtube_rss"))
+    assert result.relevant is True
+    assert "SHOOTING" in result.topic_codes
+
+
+def test_the_word_basketball_is_still_required_outside_the_youtube_allowlist():
+    assert classify_relevance(make_source("Why Your Shot Drifts and Falls Short...")).relevant is False

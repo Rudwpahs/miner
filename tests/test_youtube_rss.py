@@ -26,6 +26,8 @@ def test_load_channel_ids_reads_only_allowlisted_ids():
         "UCe1Ka1W1V_TfRSwE_luacEg",
         "UCXrvAIp3vLwn0sGa4xf6Tyw",
         "UCqjq2Zq6QUwpDR45Ns89YDw",
+        "UCspHEavqXfrWe2YFps_4RiQ",
+        "UCgP1mu1UXba9r2owhCHo--g",
     )
 
 
@@ -34,6 +36,8 @@ def test_load_collect_all_channel_ids_reads_channels_that_only_teach():
         "UCe1Ka1W1V_TfRSwE_luacEg",  # Vision Driven Basketball
         "UCXrvAIp3vLwn0sGa4xf6Tyw",  # Shot Science Basketball
         "UCqjq2Zq6QUwpDR45Ns89YDw",  # ShotMechanics
+        "UCspHEavqXfrWe2YFps_4RiQ",  # Coach Dave Love
+        "UCgP1mu1UXba9r2owhCHo--g",  # ILoveBasketballTV
     )
 
 
