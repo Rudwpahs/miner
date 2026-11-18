@@ -29,6 +29,7 @@
 - 명시적으로 허용한 YouTube 코칭 / 전문가 채널(`config/youtube_channels.json`). 한 번에 50건이 차면 다음 실행은 잘린 채널부터 읽으므로, 목록 뒤쪽 채널도 빠지지 않습니다.
 - 같은 provenance·rate-limit·fixture 검증을 통과한 추가 공식/API 소스
 - 이미 수집한 SHOOTING YouTube 영상의 자막 중 슈팅 동작 문장만 뽑은 발췌(`youtube_transcript`, 전문가 의견으로 표시, 최대 1,200자). 마침표가 거의 없는 자동 자막은 24단어씩 끊어서 봅니다. YouTube가 클라우드 IP를 막으므로 이 단계만 소유자 PC에서 `scripts/run_transcript_excerpts.py`로 실행합니다. 전체 자막은 저장하지 않습니다.
+- 초록 없이 수집된 Crossref 논문의 OpenAlex 초록(`openalex_abstract`, 최대 1,200자). 원래 Crossref 후보를 `supersedes_candidate_id`로 가리키는 새 후보로 보내며, 원래 기록은 고치지 않습니다. 슈팅·생체역학 논문부터 소유자 PC에서 `scripts/run_openalex_abstracts.py`로 하루 500편씩 조회합니다.
 
 ### Explicitly out of scope
 
